@@ -1,0 +1,32 @@
+# 依赖与构建产物
+node_modules/
+.pnpm-store/
+
+# 本地运行数据 / 凭据（绝对不要提交）
+.env
+.env.*
+*.credentials.yaml
+.credentials.yaml
+*.pem
+*.key
+*.pfx
+*.p12
+
+# 测试产物
+tests/runs/
+*.log
+
+# 编辑器与系统文件
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 安装器备份与临时文件
+*.bak
+*.bak-*
+*.before-fujiang.bak
+*.before-fujiang-migration.bak
+*.fujiang.tmp
+*.tmp
