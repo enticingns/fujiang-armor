@@ -1,0 +1,49 @@
+{
+  "name": "fujiang-armor",
+  "version": "0.5.0",
+  "description": "富江破甲：DSH 提示词内核注入与实时破甲状态条",
+  "license": "CC-BY-NC-SA-4.0",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./client.js": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "prompts",
+    "tests",
+    "scripts",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.md"
+  ],
+  "scripts": {
+    "harness:check": "node --check index.js && node --check client.js",
+    "verify": "node scripts/verify_plugin.mjs"
+  },
+  "dsh": {
+    "id": "fujiang-armor",
+    "name": "富江破甲",
+    "version": "0.5.0",
+    "permissions": "系统提示词注入, 客户端状态条",
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}

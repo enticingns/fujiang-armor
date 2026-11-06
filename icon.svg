@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Fujiang armor">
+  <defs>
+    <linearGradient id="fjShield" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#10b981"/>
+      <stop offset="1" stop-color="#047857"/>
+    </linearGradient>
+  </defs>
+  <path d="M32 4 8 13v19c0 14 10.6 24.3 24 28 13.4-3.7 24-14 24-28V13L32 4z" fill="url(#fjShield)"/>
+  <path d="M32 10 14 17v15c0 11 8.1 19.2 18 22.4C41.9 51.2 50 43 50 32V17L32 10z" fill="#022c22" opacity="0.35"/>
+  <path d="M22 32.5 29 39l14-15" fill="none" stroke="#ecfdf5" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
