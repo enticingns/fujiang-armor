@@ -29,7 +29,8 @@
   "scripts": {
     "harness:check": "node --check index.js && node --check client.js",
     "verify": "node scripts/verify_plugin.mjs",
-    "test:channel": "node scripts/test_injection_channel.mjs"
+    "test:channel": "node scripts/test_injection_channel.mjs",
+    "test:encoding": "node scripts/check_encoding.mjs"
   },
   "dsh": {
     "id": "fujiang-armor",
