@@ -5,6 +5,8 @@
 #   .\install.ps1 -DshHome "D:\dsh-rc\.dsh-home"   # 安装到隔离实例，完全不影响默认 DSH
 #   .\install.ps1 -Profile desktop                  # 只装到 desktop profile
 #   .\install.ps1 -AllProfiles                      # 装到该 home 下所有 profile
+#   .\install.ps1 -InjectionMode user              # 模式一：user 会话注入（默认）
+#   .\install.ps1 -InjectionMode legacy            # 模式二：老版本 system 双层段注入
 #
 # 说明：本脚本只写 -DshHome 指定的那一个数据目录，不会碰其它 DSH 数据目录。
 
@@ -13,13 +15,15 @@ param(
     [string]$DshHome,
     [string[]]$Profile,
     [switch]$AllProfiles,
-    [switch]$SkipPnpmInstall
+    [switch]$SkipPnpmInstall,
+    [ValidateSet('user', 'legacy')]
+    [string]$InjectionMode = 'user'
 )
 
 $ErrorActionPreference = 'Stop'
 $pluginName  = 'fujiang-armor'
 $pluginLabel = '富江破甲'
-$pluginVersion = '0.6.1'
+$pluginVersion = '0.7.0'
 $srcDir = $PSScriptRoot
 
 # ---------- 输出辅助 ----------
@@ -293,7 +297,7 @@ Write-Ok "插件已复制到：$destDir"
 
 # ---------- [6] 挂载到 profile（版本自适应） ----------
 Write-Step '写入 profile 挂载'
-$mount = Invoke-Compat -Node $nodeBin -Arguments (@($compatJs, 'mount', $targetHome) + $profileDirs)
+$mount = Invoke-Compat -Node $nodeBin -Arguments (@($compatJs, 'mount', $targetHome) + $profileDirs + @('--mode', $InjectionMode))
 if ($mount.ExitCode -ne 0) {
     Write-Err "挂载失败：$($mount.Output)"
     exit 1
@@ -306,6 +310,8 @@ if ($mount.Data) {
         }
         if ($report.changed) { Write-Ok "[$name] cordis.patch.yml 已更新（$($report.actions -join ', ')）" }
         else { Write-Ok "[$name] cordis.patch.yml 已是最新，无需改动" }
+    }
+    Write-Ok "注入模式：$($mount.Data.injectionMode)"
     }
     foreach ($warning in $mount.Data.warnings) { Write-Warn $warning }
     if ($mount.Data.homePatch) { Write-Ok "已修复 home 级补丁中的 {{cwd}}：$($mount.Data.homePatch.file)" }
@@ -388,6 +394,7 @@ Write-Host ''
 Write-Host "  $pluginLabel v$pluginVersion 已安装到：" -ForegroundColor Green
 Write-Host "    数据目录：$targetHome" -ForegroundColor White
 Write-Host "    profile ：$((($profileDirs | ForEach-Object { Split-Path $_ -Leaf }) -join ', '))" -ForegroundColor White
+Write-Host "    注入模式：$InjectionMode" -ForegroundColor White
 Write-Host "    插件目录：$destDir" -ForegroundColor White
 Write-Host ''
 Write-Host '  最后一步：完全退出并重启该 DSH 实例，新建会话即可生效。' -ForegroundColor White

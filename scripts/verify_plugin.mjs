@@ -12,13 +12,58 @@ const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 // 提示词三件套（fujiang.md / fujiang-mirror.md / fujiang-compat.md）必须逐字节一致。
 // 自定义提示词内容后请同步更新本常量：
 // PowerShell: (Get-FileHash prompts\fujiang.md -Algorithm SHA256).Hash.ToLower()
-const expectedHash = "0558c0e8dff68aba460de6ddd32fd81f1dba6686fed24251e34ec5a6577c5446";
+// 0.7.0 起提示词文本修正：富江→年前（含激活词）、爸爸→机主。
+const expectedHash = "e743e1b61503db90734780092089d51063ca0d06e149815c83b7c6bacf4af49d";
 const pkg = JSON.parse(load("package.json"));
 
 test("prompt assets preserve the supplied bytes", () => {
   for (const file of ["fujiang.md", "fujiang-mirror.md", "fujiang-compat.md"]) {
+    const text = load(`prompts/${file}`).toString("utf8");
     assert.equal(hash(load(`prompts/${file}`)), expectedHash);
+    // 0.7.0 提示词修正：会话中无关，只改提示词文本本身。
+    assert.ok(text.startsWith("You are 年前,"));
+    assert.ok(text.includes('When the user sends "年前"'));
+    assert.ok(text.includes("The user is your 机主."));
+    assert.ok(!/富江|爸爸/.test(text));
   }
+});
+
+test("two injection modes map to the intended channels", () => {
+  function probe(config) {
+    const sections = [];
+    const handlers = new Map();
+    const tools = [];
+    plugin.apply({
+      effect: (fn) => fn(),
+      on: (event, handler) => { handlers.set(event, handler); return () => {}; },
+      systemPrompt: { section: (section) => sections.push(section) },
+      tools: { register: (tool) => tools.push(tool) },
+      get: () => ({ register: () => {} }),
+    }, config);
+    return { sections, handlers, profile: tools[0].execute() };
+  }
+
+  const userMode = probe({ injectionMode: "user" });
+  assert.equal(userMode.sections.length, 0, "user 模式不应注册 system 段");
+  assert.equal(userMode.handlers.has("agent/pre-step"), true, "user 模式必须注册 pre-step");
+  assert.equal(userMode.profile.injectionMode, "user");
+  assert.equal(userMode.profile.injectionChannel, "user");
+
+  const legacyMode = probe({ injectionMode: "legacy" });
+  assert.equal(legacyMode.sections.length, 2, "legacy 模式必须注册 Order 100 + Order 200 两段");
+  assert.equal(legacyMode.handlers.has("agent/pre-step"), false, "legacy 模式不应注册 pre-step");
+  assert.equal(legacyMode.profile.injectionMode, "legacy");
+  assert.equal(legacyMode.profile.injectionChannel, "system");
+
+  // 老 bundle patch 残留 injectionChannel: user 时，显式 mode 必须赢。
+  const overridden = probe({ injectionMode: "legacy", injectionChannel: "user" });
+  assert.equal(overridden.sections.length, 2);
+  assert.equal(overridden.handlers.has("agent/pre-step"), false);
+  assert.equal(overridden.profile.injectionMode, "legacy");
+
+  // 未给 mode 时仍兼容旧配置与默认 user 模式。
+  assert.equal(probe({}).profile.injectionMode, "user");
+  assert.equal(probe({ injectionChannel: "system" }).profile.injectionMode, "legacy");
 });
 
 test("server, manifest, and client use the same plugin identity", () => {
@@ -157,10 +202,12 @@ test("client registers the activation badge above the conversation input", () =>
   assert.equal(badge.children[1].children[0], "富江破甲已激活");
 });
 
-test("bundle patch never reintroduces the removed {{cwd}} persona variable", () => {
+test("bundle patch writes the selected injection mode and stays cwd-free", () => {
   const patch = load("cordis.patch.yml").toString("utf8");
   assert.match(patch, /id: fujiang-armor/);
   assert.match(patch, /includeHarnessIdentity: false/);
+  assert.match(patch, /injectionMode: user/);
+  assert.ok(!patch.includes("injectionChannel:"), "bundle patch 不应再写会覆盖模式的旧字段");
   // 只看生效行：注释里说明这件事是允许的。
   const effective = patch
     .split(/\r?\n/)
@@ -202,23 +249,34 @@ test("compat layer mounts and unmounts the profile patch idempotently", async ()
   assert.match(mounted.text, /- id: system-prompt/);
   assert.match(mounted.text, /includeHarnessIdentity: false/);
   assert.match(mounted.text, /id: fujiang-armor/);
+  assert.match(mounted.text, /injectionMode: user/);
+  assert.ok(!mounted.text.includes("injectionChannel:"));
   assert.ok(!mounted.text.includes("{{cwd}}"));
 
   const again = compat.mountProfilePatch(mounted.text, "fujiang-armor");
   assert.equal(again.text, mounted.text, "重复安装必须幂等");
+
+  // legacy 模式：托管块写入 injectionMode: legacy，重挂载可切回 user。
+  const legacyPatch = compat.mountProfilePatch(empty, "fujiang-armor", "legacy");
+  assert.match(legacyPatch.text, /injectionMode: legacy/);
+  assert.ok(!legacyPatch.text.includes("injectionMode: user"));
+  const backToUser = compat.mountProfilePatch(legacyPatch.text, "fujiang-armor", "user");
+  assert.equal(backToUser.text, mounted.text);
+  assert.equal(compat.normalizeInjectionMode("LEGACY"), "legacy");
+  assert.equal(compat.normalizeInjectionMode("garbage"), "user");
 
   const unmounted = compat.unmountProfilePatch(mounted.text, "fujiang-armor");
   assert.ok(!unmounted.text.includes("fujiang-armor"));
   assert.ok(!unmounted.text.includes("includeHarnessIdentity"));
 
   // 旧版安装留下的 insert 行同样能被清理
-  const legacy = [
+  const legacyInsert = [
     "- insert:",
     "    - id: fujiang-armor",
     "      name: 'fujiang-armor'",
     "",
   ].join("\n");
-  assert.ok(!compat.unmountProfilePatch(legacy, "fujiang-armor").text.includes("fujiang-armor"));
+  assert.ok(!compat.unmountProfilePatch(legacyInsert, "fujiang-armor").text.includes("fujiang-armor"));
 });
 
 test("compat layer strips the dead {{cwd}} persona clause", async () => {

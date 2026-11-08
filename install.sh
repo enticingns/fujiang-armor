@@ -5,11 +5,18 @@
 #   ./install.sh                                        # 安装到 $DSH_HOME 或 ~/.dsh
 #   DSH_HOME=/path/to/isolated ./install.sh             # 安装到隔离实例
 #   DSH_PROFILE=desktop ./install.sh                    # 只装指定 profile
+#   INJECTION_MODE=legacy ./install.sh                  # 模式二：老版本 system 双层段注入
+#                                                      # 默认 user = 模式一：user 会话注入
 set -euo pipefail
 
 PLUGIN_NAME="fujiang-armor"
 PLUGIN_LABEL="富江破甲"
-PLUGIN_VERSION="0.6.1"
+PLUGIN_VERSION="0.7.0"
+INJECTION_MODE="${INJECTION_MODE:-user}"
+case "$INJECTION_MODE" in
+  user|legacy) ;;
+  *) printf '    [X] INJECTION_MODE only accepts user or legacy, got: %s\n' "$INJECTION_MODE" >&2; exit 1 ;;
+esac
 DSH_ROOT="${DSH_HOME:-$HOME/.dsh}"
 PLUGINS_DIR="$DSH_ROOT/plugins"
 DEST_DIR="$PLUGINS_DIR/$PLUGIN_NAME"
@@ -90,11 +97,12 @@ ok "插件已复制到：$DEST_DIR"
 
 # ---------- 挂载 ----------
 step "写入 profile 挂载"
-MOUNT_ARGS=("mount" "$DSH_ROOT" "${PROFILE_DIRS[@]}")
+MOUNT_ARGS=("mount" "$DSH_ROOT" "${PROFILE_DIRS[@]}" "--mode" "$INJECTION_MODE")
 node "$COMPAT" "${MOUNT_ARGS[@]}" | node -e '
 let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
   try{
     const r=JSON.parse(s);
+    console.log("    [OK] 注入模式："+(r.injectionMode||"user"));
     for(const p of r.profiles||[]){
       const name=p.profileDir.split(/[\\/]/).pop();
       if((p.cwdRemoved||[]).length) console.log("    [OK] ["+name+"] 已清除失效的 {{cwd}} persona 子句（0.2.2 起会导致提示词组装失败）");
@@ -135,6 +143,7 @@ cat <<EOF
   $PLUGIN_LABEL v$PLUGIN_VERSION 已安装！
   数据目录：$DSH_ROOT
   目标 profile：$(printf '%s ' "${PROFILE_DIRS[@]}" | sed 's/ *$//')
+  注入模式：$INJECTION_MODE
   最后一步：重启该 DSH 实例，新建会话即可生效。
   验证方法：输入框上方应显示绿色状态条「富江破甲已激活」。
   卸载方法：运行 ./uninstall.sh（同样支持 DSH_HOME 指定隔离实例）。

@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Fujiang armor",
-    "description": "Injects the Fujiang prompt kernel and shows a live armor badge above the composer."
+    "description": "Two injection modes: user-session prefix / legacy system dual-layer sections, plus a live armor badge above the composer."
   }
 }

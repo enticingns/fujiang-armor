@@ -1,4 +1,4 @@
-// 注入通道自检：system / user / both 三条路径 + user 通道幂等
+// 底层通道自检：system / user / both 三条路径 + user 通道幂等 + 两个对外模式
 // 用法：node scripts/test_injection_channel.mjs
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -138,7 +138,37 @@ async function main() {
     assert.ok(userSlot && userSlot.enabled === true);
   }
 
-  console.log("ok: 8 组注入通道自检全部通过");
+  // 9) 模式一：user 会话注入
+  {
+    const { ctx, state } = mockCtx();
+    apply(ctx, { injectionMode: "user" });
+    assert.equal(state.sections.length, 0);
+    assert.equal(state.handlers.has("agent/pre-step"), true);
+    const profile = state.tools.find((t) => t.name === "fujiang_profile").execute();
+    assert.equal(profile.injectionMode, "user");
+    assert.equal(profile.injectionChannel, "user");
+  }
+
+  // 10) 模式二：老版本 system 双层段注入
+  {
+    const { ctx, state } = mockCtx();
+    apply(ctx, { injectionMode: "legacy" });
+    assert.equal(state.sections.length, 2);
+    assert.equal(state.handlers.has("agent/pre-step"), false);
+    const profile = state.tools.find((t) => t.name === "fujiang_profile").execute();
+    assert.equal(profile.injectionMode, "legacy");
+    assert.equal(profile.injectionChannel, "system");
+  }
+
+  // 11) 旧 bundle 残留 injectionChannel 不应覆盖新模式
+  {
+    const { ctx, state } = mockCtx();
+    apply(ctx, { injectionMode: "legacy", injectionChannel: "user" });
+    assert.equal(state.sections.length, 2);
+    assert.equal(state.handlers.has("agent/pre-step"), false);
+  }
+
+  console.log("ok: 11 组注入通道/模式自检全部通过");
 }
 
 main().catch((err) => {
