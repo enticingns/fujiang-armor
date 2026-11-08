@@ -312,7 +312,6 @@ if ($mount.Data) {
         else { Write-Ok "[$name] cordis.patch.yml 已是最新，无需改动" }
     }
     Write-Ok "注入模式：$($mount.Data.injectionMode)"
-    }
     foreach ($warning in $mount.Data.warnings) { Write-Warn $warning }
     if ($mount.Data.homePatch) { Write-Ok "已修复 home 级补丁中的 {{cwd}}：$($mount.Data.homePatch.file)" }
 } else {
