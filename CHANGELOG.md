@@ -24,6 +24,13 @@ systemPrompt 段只对「原样转发 system」的链路有效。一旦中间层
 - 新增 `scripts/test_injection_channel.mjs`（`npm run test:channel`）：8 组自检覆盖三条通道、幂等、块内容、
   拒绝步与无 user 消息的边界。
 
+### 修复
+
+- **`install.ps1` 丢失 UTF-8 BOM 会导致安装器直接解析失败。**
+  PowerShell 5.1 读无 BOM 的 `.ps1` 时按 ANSI 解码：中文变乱码，多字节序列还会吃掉引号，于是报一串
+  「表达式或语句中包含意外的标记」。已补回 BOM，并新增 `scripts/check_encoding.mjs`
+  （`npm run test:encoding`）作守卫：`.ps1` 必须带 BOM、`.sh` 必须不带。
+
 ### 升级注意
 
 - 默认通道变成 `user`。如果希望保持旧行为，在插件配置里显式写 `injectionChannel: system`。
