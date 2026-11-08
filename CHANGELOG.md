@@ -18,6 +18,19 @@
 - **原因**：把「注入模式」输出移出 `foreach` 时残留了一个多余的 `}`，导致 `if ($mount.Data)` 提前闭合，`else` 变成孤立语句。
 - **修复**：删掉多余花括号；`verify_plugin.mjs` 增加静态花括号/引号平衡守卫（配合 PowerShell Parser 实测），同类语法错误会在自检阶段直接失败。
 
+### 0.7.0 修复（一键 BAT 参数被拆行）
+
+- **症状**：双击 `点我一键注入-老版本.bat` 报 `缺少参数"InjectionMode"的某个参数`，紧接着 `'legacy' 不是内部或外部命令`。
+- **原因**：生成 BAT 时 `'… -InjectionMode ' + $mode + ' %*'` 被拆成三个独立行写进文件：
+  ```bat
+  "…powershell.exe" … -InjectionMode
+  legacy
+   %*
+  ```
+  cmd 逐行执行，`legacy` 就成了独立命令。与行尾无关（文件本来就是 CRLF）。
+- **修复**：改用 `-f` 格式化生成，三个 BAT 的调用行均为单行完整命令；`check_encoding.mjs` 增加两条守卫——`.bat`/`.cmd`/`.ps1` 必须是 CRLF，且 BAT 里任何以 `-InjectionMode` 等参数名结尾的行直接判失败。
+- **配套**：`.bat` / `.ps1` 现在按 CRLF 原样存进仓库（GitHub ZIP 下载不应用 `.gitattributes` 的 `eol` 转换，存 LF 会让解压后的批处理坏掉）。
+
 ## 0.6.1 — 修复中文 Windows 下安装器报「未终止的字符串」
 
 - **症状**：`install.ps1` 在「写入 profile 挂载」处抛

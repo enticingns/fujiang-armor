@@ -3,9 +3,7 @@ setlocal
 title Fujiang Armor Installer [user]
 echo.
 echo Installing Fujiang Armor (mode: user)...
-"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1" -InjectionMode 
-user
- %*
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1" -InjectionMode user %*
 set "DSH_INSTALL_RESULT=%ERRORLEVEL%"
 echo.
 if not "%DSH_INSTALL_RESULT%"=="0" echo Installation failed. See the message above.
