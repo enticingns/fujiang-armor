@@ -108,6 +108,11 @@ function inspect(entry) {
   const header = events.find((e) => e.type === "session");
   const systemEvents = events.filter((e) => e.type === "system/message");
   const systemText = systemEvents.map((e) => textOfMessage(e?.data?.message)).join("\n\n");
+  // 0.6.0 起内核也可以走 user 通道（前置到最后一条 user 消息），
+  // 因此判定要同时看 system 与 user 两侧，不能只看系统提示词。
+  const userEvents = events.filter((e) => e.type === "user/message");
+  const userText = userEvents.map((e) => textOfMessage(e?.data?.message)).join("\n\n");
+  const combinedText = `${systemText}\n\n${userText}`;
   const requestHeader = events.find((e) => e.type === "request/header");
   const tools = Array.isArray(requestHeader?.data?.header?.tools)
     ? requestHeader.data.header.tools.map((tool) => tool?.name).filter(Boolean)
@@ -116,8 +121,11 @@ function inspect(entry) {
 
   const kernelHits = KERNEL_MARKERS.map((marker) => ({
     marker,
-    count: systemText.split(marker).length - 1,
+    count: combinedText.split(marker).length - 1,
   }));
+  const inSystem = KERNEL_MARKERS.every((marker) => systemText.includes(marker));
+  const inUser = KERNEL_MARKERS.every((marker) => userText.includes(marker));
+  const channel = inSystem && inUser ? "both" : inSystem ? "system" : inUser ? "user" : "none";
 
   return {
     sessionId: entry.sessionId,
@@ -135,11 +143,12 @@ function inspect(entry) {
     kernelHits,
     kernelInjected: kernelHits.every((hit) => hit.count > 0),
     dualLayer: (kernelHits[0]?.count ?? 0) >= 2,
+    channel,
     toolRegistered: tools.includes(TOOL_NAME),
     toolCount: tools.length,
     assistantMessages: events.filter((e) => e.type === "assistant/message").length,
-    userMessages: events.filter((e) => e.type === "user/message").length,
-    promptHead: systemText.slice(0, 80),
+    userMessages: userEvents.length,
+    promptHead: (inSystem ? systemText : userText).slice(0, 80),
   };
 }
 
@@ -150,8 +159,8 @@ function verdictOf(report) {
     : "  [X]  会话日志里没有 system/message —— 这条会话还没发出过模型请求");
   if (report.systemMessages > 0) {
     lines.push(report.kernelInjected
-      ? `  [OK] 内核已注入：${report.kernelHits.map((h) => `${h.marker}×${h.count}`).join("，")}`
-      : "  [X]  内核未注入：系统提示词里找不到富江内核文本");
+      ? `  [OK] 内核已注入（通道：${report.channel}）：${report.kernelHits.map((h) => `${h.marker}×${h.count}`).join("，")}`
+      : "  [X]  内核未注入：system 与 user 两侧都找不到富江内核文本");
     lines.push(report.dualLayer
       ? "  [OK] 双段注入生效（Order 100 内核 + Order 200 镜像各一份）"
       : "  [i]  单段注入（DUAL_LAYER_INJECTION=false 或只命中一段）");

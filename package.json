@@ -1,6 +1,6 @@
 {
   "name": "fujiang-armor",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "富江破甲：DSH 提示词内核注入与实时破甲状态条",
   "license": "CC-BY-NC-SA-4.0",
   "type": "module",
@@ -28,13 +28,14 @@
   ],
   "scripts": {
     "harness:check": "node --check index.js && node --check client.js",
-    "verify": "node scripts/verify_plugin.mjs"
+    "verify": "node scripts/verify_plugin.mjs",
+    "test:channel": "node scripts/test_injection_channel.mjs"
   },
   "dsh": {
     "id": "fujiang-armor",
     "name": "富江破甲",
-    "version": "0.5.0",
-    "permissions": "系统提示词注入, 客户端状态条",
+    "version": "0.6.0",
+    "permissions": "系统提示词注入, user 消息前缀注入, 客户端状态条",
     "bundle": {
       "patch": "./cordis.patch.yml"
     },

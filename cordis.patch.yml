@@ -14,3 +14,6 @@
       config:
         enabled: true
         autoApplyOnStart: true
+        # 注入通道：system / user / both（缺省 user）
+        # user = 内核前置到最后一条 user 消息，可穿过会重写/剥离 system 的网关
+        injectionChannel: user

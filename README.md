@@ -2,7 +2,41 @@
 
 富江破甲是一个用于 DSH 的本地插件，内置提示词规则，提供 Windows 一键注入和一键卸载。插件加载后，会在对话输入框上方显示「富江破甲已激活」。
 
-当前版本：`0.5.0`。插件标识：`fujiang-armor`。适配 DSH `0.2.1` / `0.2.2` 系列（含 `0.2.2-rc.1`）。
+当前版本：`0.6.0`。插件标识：`fujiang-armor`。适配 DSH `0.2.1` / `0.2.2` 系列（含 `0.2.2-rc.1`）。
+
+## 0.6.0 做了什么（新增 user 通道注入）
+
+systemPrompt 段只对「原样转发 system」的链路有效。如果中间层重写 system——典型是 OpenAI 兼容网关以
+`prompt.mode=custom` 运行，会把 `messages` 里所有 `role=system/developer` 的消息整段删掉、换成它自己的
+提示词——内核文本就到不了模型，破甲静默失效（请求仍然 200，很难察觉）。
+
+0.6.0 增加 `injectionChannel` 配置，默认改走 **user 通道**：
+
+| 取值 | 行为 | 适用 |
+| --- | --- | --- |
+| `user`（默认） | 通过 `agent/pre-step` 瀑布把内核**前置到本步最后一条 user 消息** | 网关会重写 system 的链路；也是更稳的通用选择 |
+| `system` | 0.5.0 及以前的行为（Order 100 内核 + Order 200 镜像） | 需要保持旧行为的场景 |
+| `both` | 两路都注入 | 想同时保留 system 权重与 user 兜底 |
+
+要点：
+
+- **幂等**：`agent/pre-step` 每个 step 都会跑，同一条 user 消息会反复出现在 `messages` 里；实现用内核开头
+  48 字符做哨兵，已注入过的消息直接跳过，不会重复拼接。
+- **块内容安全**：user 内容是字符串时前置为 `<内核>\n\n<原文>`；是内容块数组时在头部插入一个 text 块，
+  图片等其它块原样保留。
+- `fujiang_profile` 会返回当前 `injectionChannel`；`scripts/check-injection.mjs` 同时检查 system 与 user 两侧
+  并报告实际生效的通道；`npm run test:channel` 提供 8 组离线自检。
+
+配置示例（`cordis.patch.yml` 已默认写入 `user`）：
+
+```yaml
+- insert:
+    - id: fujiang-armor
+      name: 'fujiang-armor'
+      config:
+        enabled: true
+        injectionChannel: user
+```
 
 ## 0.5.0 做了什么（针对 DSH 0.2.2-rc.1）
 

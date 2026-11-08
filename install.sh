@@ -9,7 +9,7 @@ set -euo pipefail
 
 PLUGIN_NAME="fujiang-armor"
 PLUGIN_LABEL="富江破甲"
-PLUGIN_VERSION="0.5.0"
+PLUGIN_VERSION="0.6.0"
 DSH_ROOT="${DSH_HOME:-$HOME/.dsh}"
 PLUGINS_DIR="$DSH_ROOT/plugins"
 DEST_DIR="$PLUGINS_DIR/$PLUGIN_NAME"

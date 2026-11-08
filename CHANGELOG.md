@@ -1,5 +1,34 @@
 # 更新说明
 
+## 0.6.0 — 新增 user 通道注入（可穿过重写 system 的网关）
+
+### 为什么改
+
+systemPrompt 段只对「原样转发 system」的链路有效。一旦中间层重写 system（典型：OpenAI 兼容网关以
+`prompt.mode=custom` 运行，会把 `messages` 里所有 `role=system/developer` 的消息整段删掉、换成它自己的
+提示词），内核文本就到不了模型，破甲静默失效——请求仍然 200，所以很难察觉。
+
+### 新增
+
+- **`injectionChannel` 配置项**：`user`（默认）/ `system` / `both`。
+  - `user`：通过 `agent/pre-step` 瀑布把内核**前置到本步最后一条 user 消息**。user 内容会被各类网关按原样
+    转发，因此不受 system 重写影响。
+  - `system`：0.5.0 及以前的行为（Order 100 内核 + Order 200 镜像）。
+  - `both`：两路都注入。
+- **幂等**：`agent/pre-step` 每个 step 都会跑，同一条 user 消息会反复出现在 `messages` 里。实现上用内核开头
+  48 字符做哨兵，已注入过的消息直接跳过，不会逐 step 重复拼接。
+- **块内容安全**：user 消息是 `string` 时前置为 `<内核>\n\n<原文>`；是内容块数组时在头部插入一个 text 块，
+  图片等其它块原样保留。
+- `fujiang_profile` 增加 `injectionChannel` 字段与 `fujiang-armor:user-message-prefix` 槽位；`scripts/check-injection.mjs`
+  现在同时检查 system 与 user 两侧，并报告实际生效的通道。
+- 新增 `scripts/test_injection_channel.mjs`（`npm run test:channel`）：8 组自检覆盖三条通道、幂等、块内容、
+  拒绝步与无 user 消息的边界。
+
+### 升级注意
+
+- 默认通道变成 `user`。如果希望保持旧行为，在插件配置里显式写 `injectionChannel: system`。
+- `cordis.patch.yml` 已显式写入 `injectionChannel: user`，重跑安装器即生效。
+
 ## 0.5.0 — 适配 DSH 0.2.2-rc.1
 
 本版针对 DeepSeek Harness `0.2.2-rc.1` 的提示词注入机制变化做了适配。0.4.x 在 0.2.2 上会失效（严重时每次请求都失败），升级前请先读完本节。

@@ -1,4 +1,4 @@
-﻿# 富江破甲安装脚本（DSH 0.2.x / 0.2.2-rc.1 适配版）
+# 富江破甲安装脚本（DSH 0.2.x / 0.2.2-rc.1 适配版）
 #
 # 用法：
 #   .\install.ps1                                   # 安装到当前默认 DSH（$env:DSH_HOME 或 %USERPROFILE%\.dsh）
@@ -19,7 +19,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $pluginName  = 'fujiang-armor'
 $pluginLabel = '富江破甲'
-$pluginVersion = '0.5.0'
+$pluginVersion = '0.6.0'
 $srcDir = $PSScriptRoot
 
 # ---------- 输出辅助 ----------
