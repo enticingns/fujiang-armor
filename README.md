@@ -219,6 +219,7 @@ node scripts\check-injection.mjs --list
 | 安装成功但没有显示激活状态 | 完全退出并重新启动 DSH，确认安装时选中了当前使用的配置（多实例时确认 `-DshHome` 指向正确）。 |
 | 想从 user 模式切到老版本注入（或反过来） | 重新运行对应的一键 BAT；安装器会重写托管块里的 `injectionMode`，不需要先卸载。 |
 | 装了 legacy 但仍走 user 通道 | 检查 profile `cordis.patch.yml` 托管块里残留的 `injectionChannel`；0.7.0 起 `injectionMode` 优先，重跑安装器即可清掉歧义。 |
+| 双击 BAT 报 `缺少参数"InjectionMode"` 或 `'legacy' 不是内部或外部命令` | 用的是 0.7.0 早期版本（BAT 调用行被拆成三行）。重新下载仓库 ZIP 覆盖，`check_encoding.mjs` 已加守卫防回归。 |
 | 依赖下载失败 | 检查网络连接；`node_modules` 链接已足够加载插件，可稍后手动在 profile 目录执行 `pnpm install`。 |
 | 卸载后仍显示激活状态 | 完全退出并重新启动 DSH，确认卸载的是此前安装的配置。 |
 | 两个 DSH 实例互相干扰 | 用 `scripts\isolate-instance.ps1` 给其中一份建独立 `DSH_HOME` 与 `--user-data-dir`。 |
