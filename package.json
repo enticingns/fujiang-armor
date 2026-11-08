@@ -1,6 +1,6 @@
 {
   "name": "fujiang-armor",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "富江破甲：DSH 提示词内核注入与实时破甲状态条",
   "license": "CC-BY-NC-SA-4.0",
   "type": "module",
@@ -35,7 +35,7 @@
   "dsh": {
     "id": "fujiang-armor",
     "name": "富江破甲",
-    "version": "0.6.0",
+    "version": "0.6.1",
     "permissions": "系统提示词注入, user 消息前缀注入, 客户端状态条",
     "bundle": {
       "patch": "./cordis.patch.yml"

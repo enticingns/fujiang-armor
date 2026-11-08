@@ -587,14 +587,54 @@ export function applyAllPatches(options = {}) {
 
 // ---------------------------------------------------------------- CLI
 
+/**
+ * 把非 ASCII 字符转成 \uXXXX。
+ * 调用方（PowerShell 等）捕获子进程 stdout 时按控制台代码页解码，中文 Windows 是 GBK，
+ * 直接输出 UTF-8 中文会被解成乱码、甚至吃掉引号导致 JSON 解析失败，所以 stdout 只给纯 ASCII。
+ */
+export function asciiJson(value) {
+  return JSON.stringify(value).replace(
+    /[\u007f-\uffff]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  );
+}
+
+/**
+ * 为隔离实例播种 profile 补丁：保留用户 config 覆盖行，丢掉所有第三方 insert 与失效的 {{cwd}}。
+ * 直接写文件，不经过 stdout，避免编码问题。
+ * @returns {{file: string, cwdRemoved: string[], chars: number}}
+ */
+export function seedProfilePatchFile(srcFile, dstFile) {
+  const text = fs.existsSync(srcFile) ? readText(srcFile) : "[]\n";
+  const cwd = stripCwdPersona(text);
+  const seeded = stripAllInsertRows(cwd.text);
+  const body = seeded.trim();
+  const out = body === "" || body === "[]" ? "[]\n" : `${body}\n`;
+  writeTextAtomic(dstFile, out);
+  return { file: dstFile, cwdRemoved: cwd.removed, chars: out.length };
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const [, , command, dshHome, ...rest] = process.argv;
+    const [, , command, dshHome, ...rawRest] = process.argv;
     if (!command) {
       throw new Error(
-        "Usage: node scripts/lib/compat.js <mount|unmount|link|unlink|check> <dshHome> [spec|profileDir ...]",
+        "Usage: node scripts/lib/compat.js <mount|unmount|link|unlink|check|seed> <dshHome> [spec|profileDir ...] [--out <file>]",
       );
     }
+
+    // --out <file>：把结果写成 UTF-8 文件，供调用方用 UTF-8 读取（推荐路径）。
+    let outFile = null;
+    const rest = [];
+    for (let i = 0; i < rawRest.length; i += 1) {
+      if (rawRest[i] === "--out") {
+        outFile = rawRest[i + 1];
+        i += 1;
+        continue;
+      }
+      rest.push(rawRest[i]);
+    }
+
     const home = dshHome || findDshHome();
     let result;
 
@@ -623,10 +663,23 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         }
       }
       result = { dshHome: home, profiles: reports };
+    } else if (command === "seed") {
+      // seed <源补丁> <目标补丁>
+      const [srcFile, dstFile] = rest;
+      if (!srcFile || !dstFile) throw new Error("Usage: node scripts/lib/compat.js seed <sourcePatch> <targetPatch>");
+      result = seedProfilePatchFile(path.resolve(srcFile), path.resolve(dstFile));
     } else {
       throw new Error(`unknown command: ${command}`);
     }
-    console.log(JSON.stringify(result));
+
+    if (outFile) {
+      const target = path.resolve(outFile);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+      console.log(asciiJson({ out: target }));
+    } else {
+      console.log(asciiJson(result));
+    }
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;
