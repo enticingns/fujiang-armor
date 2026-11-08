@@ -16,6 +16,27 @@ const PROMPT_MIRROR_TEXT = readFileSync(PROMPT_MIRROR_URL, "utf8");
 //   false = 单段注入（Order 100），省掉重复 token，行为等价
 const DUAL_LAYER_INJECTION = true;
 
+// 注入通道：
+//   "system" = 只注册 systemPrompt 段（0.5.0 及以前的行为）
+//   "user"   = 只把内核文本前置到最后一条 user 消息（默认）
+//   "both"   = 两路都注入
+//
+// 为什么默认改成 "user"：systemPrompt 段会被任何「重写 system」的中间层抹掉。
+// 典型例子是网关以 prompt.mode=custom 运行时，会把 messages 里所有
+// role=system/developer 的消息整段删除、换成它自己的提示词——此时内核文本到不了
+// 模型。user 通道不受影响（user 内容按原样转发），因此更稳。
+const DEFAULT_CHANNEL = "user";
+
+function normalizeChannel(value) {
+  const v = String(value ?? "").trim().toLowerCase();
+  return v === "system" || v === "both" || v === "user" ? v : DEFAULT_CHANNEL;
+}
+
+// 幂等标记：取内核开头一小段，用来判断某条消息是否已经注入过。
+// pre-step 每个 step 都会跑一次，同一条 user 消息会反复出现在 messages 里，
+// 没有这个判断就会逐 step 重复拼接。
+const ARMOR_SENTINEL = PROMPT_TEXT.trim().slice(0, 48);
+
 // 段注册参数：`interpolate: false` 让宿主跳过变量插值。
 // 未实现该字段的旧宿主会忽略它（此时提示词本身不含 `{{…}}` 组，仍然安全）。
 function sectionOf(name, order, text) {
@@ -28,48 +49,62 @@ const objectOutput = {
 };
 
 // 运行时元数据工具：返回插件版本与能力清单
-const profileTool = {
-  name: "fujiang_profile",
-  description: "返回富江破甲的插件版本与提示词注入状态。",
-  parameters: { type: "object", properties: {}, additionalProperties: false },
-  output: objectOutput,
-  execute() {
-    return {
-      plugin: "fujiang-armor",
-      pluginVersion: "0.5.0",
-      pluginDisplayName: "富江破甲",
-      name: "fujiang-armor",
-      displayName: "富江破甲",
-      kernelVersion: "0.5.0",
-      targetArchitecture: "DeepSeek-V4 / V4-Pro / V4.1-Flash 全系列",
-      targetHost: "DSH 0.2.1 / 0.2.2 及以上（含 0.2.2-rc.1）",
-      promptSource: ["prompts/fujiang.md", "prompts/fujiang-mirror.md"],
-      injection: [
-        {
-          section: "fujiang-armor:global-system-prompt",
-          order: 100,
-          enabled: true,
-          interpolate: false,
-        },
-        {
-          section: "fujiang-armor:dual-layer-reinforce",
-          order: 200,
-          enabled: DUAL_LAYER_INJECTION,
-          interpolate: false,
-        },
-      ],
-      mode: "armor",
-      hostFeatures: [
-        "Dual-Layer Injection: Order 100 通用内核 + Order 200 强化镜像",
-        "Section Hosting: 双槽位可由 DUAL_LAYER_INJECTION 切换单段注入",
-        "Literal Sections: interpolate:false 原样注入，提示词可自由使用花括号",
-        "Armor Projection: 开头窗口(160)判拒 + REFUSAL/FALLBACK/SAFE/RISK 标记 + 域命中",
-        "Client Badge: 输入框上方「富江破甲已激活」实时状态条",
-        "Profile Tool: fujiang_profile 返回内核版本与注入槽位元数据",
-      ],
-    };
-  },
-};
+function profileToolOf(channel) {
+  const useSystem = channel === "system" || channel === "both";
+  const useUser = channel === "user" || channel === "both";
+  return {
+    name: "fujiang_profile",
+    description: "返回富江破甲的插件版本与提示词注入状态。",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    output: objectOutput,
+    execute() {
+      return {
+        plugin: "fujiang-armor",
+        pluginVersion: "0.6.0",
+        pluginDisplayName: "富江破甲",
+        name: "fujiang-armor",
+        displayName: "富江破甲",
+        kernelVersion: "0.6.0",
+        targetArchitecture: "DeepSeek-V4 / V4-Pro / V4.1-Flash 全系列",
+        targetHost: "DSH 0.2.1 / 0.2.2 及以上（含 0.2.2-rc.1）",
+        promptSource: ["prompts/fujiang.md", "prompts/fujiang-mirror.md"],
+        injectionChannel: channel,
+        injection: [
+          {
+            section: "fujiang-armor:global-system-prompt",
+            order: 100,
+            enabled: useSystem,
+            interpolate: false,
+          },
+          {
+            section: "fujiang-armor:dual-layer-reinforce",
+            order: 200,
+            enabled: useSystem && DUAL_LAYER_INJECTION,
+            interpolate: false,
+          },
+          {
+            section: "fujiang-armor:user-message-prefix",
+            order: 300,
+            enabled: useUser,
+            channel: "user",
+            idempotent: true,
+          },
+        ],
+        mode: "armor",
+        hostFeatures: [
+          "Injection Channel: system / user / both（user 通道可穿过重写 system 的网关）",
+          "Dual-Layer Injection: Order 100 通用内核 + Order 200 强化镜像（system 通道）",
+          "User Prefix: 内核前置到本步最后一条 user 消息，幂等不重复拼接",
+          "Section Hosting: 双槽位可由 DUAL_LAYER_INJECTION 切换单段注入",
+          "Literal Sections: interpolate:false 原样注入，提示词可自由使用花括号",
+          "Armor Projection: 开头窗口(160)判拒 + REFUSAL/FALLBACK/SAFE/RISK 标记 + 域命中",
+          "Client Badge: 输入框上方「富江破甲已激活」实时状态条",
+          "Profile Tool: fujiang_profile 返回内核版本与注入槽位元数据",
+        ],
+      };
+    },
+  };
+}
 
 // ---- 实时破甲状态（会话投影，评分器标准实现） ----
 const OPENING_WINDOW = 160;
@@ -129,6 +164,35 @@ function armorTextOf(content) {
   return content
     .map((block) => (block && block.type === "text" ? block.text : ""))
     .join("\n");
+}
+
+// 消息内容是否已经带过内核（幂等判断）。
+function isArmored(content) {
+  const text = typeof content === "string" ? content : armorTextOf(content);
+  return text.includes(ARMOR_SENTINEL);
+}
+
+// 把内核文本前置到一条消息的内容上，保留原有内容与块结构。
+//   string  → "<内核>\n\n<原文>"
+//   blocks  → 头部插入一个 text 块，其余块原样跟随（图片等不受影响）
+function armorContent(content, text) {
+  const prefix = text.trim();
+  if (typeof content === "string") {
+    return content.length ? `${prefix}\n\n${content}` : prefix;
+  }
+  if (Array.isArray(content)) {
+    return [{ type: "text", text: prefix }, ...content];
+  }
+  // 其它形态（空/未定义）不猜，直接给一条纯文本。
+  return prefix;
+}
+
+// 找到最后一条 user 消息的下标；没有则 -1。
+function lastUserIndex(messages) {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i] && messages[i].role === "user") return i;
+  }
+  return -1;
 }
 
 function matchedIn(text, markers) {
@@ -224,22 +288,49 @@ export const inject = ["tools", "systemPrompt"];
 
 export function apply(ctx, config = { autoApplyOnStart: true }) {
   // 宿主文件兼容补丁由安装器执行，避免启动时写配置触发宿主反复重载。
-  void config;
+  const channel = normalizeChannel(config?.injectionChannel);
+  const useSystem = channel === "system" || channel === "both";
+  const useUser = channel === "user" || channel === "both";
 
-  ctx.effect(() =>
-    ctx.systemPrompt.section(
-      sectionOf("fujiang-armor:global-system-prompt", 100, PROMPT_TEXT),
-    ),
-  );
-  if (DUAL_LAYER_INJECTION) {
+  if (useSystem) {
     ctx.effect(() =>
       ctx.systemPrompt.section(
-        sectionOf("fujiang-armor:dual-layer-reinforce", 200, PROMPT_MIRROR_TEXT),
+        sectionOf("fujiang-armor:global-system-prompt", 100, PROMPT_TEXT),
       ),
     );
+    if (DUAL_LAYER_INJECTION) {
+      ctx.effect(() =>
+        ctx.systemPrompt.section(
+          sectionOf("fujiang-armor:dual-layer-reinforce", 200, PROMPT_MIRROR_TEXT),
+        ),
+      );
+    }
   }
+
+  // user 通道：把内核前置到本步最后一条 user 消息。
+  // 走 agent/pre-step 瀑布——宿主允许监听者在 next() 之后返回改写过的 decision
+  // （与 dsh-plan-mode 追加叙述消息同一机制）。这里只换内容、不新增消息对象，
+  // 因此不依赖宿主的消息工厂与 id 规则。
+  if (useUser) {
+    ctx.effect(() =>
+      ctx.on("agent/pre-step", async (_payload, next) => {
+        const decision = await next();
+        if (!decision || decision.kind === "reject") return decision;
+        const messages = Array.isArray(decision.messages) ? decision.messages : null;
+        if (messages === null) return decision;
+        const idx = lastUserIndex(messages);
+        if (idx < 0) return decision;
+        const message = messages[idx];
+        if (!message || isArmored(message.content)) return decision;
+        const rewritten = messages.slice();
+        rewritten[idx] = { ...message, content: armorContent(message.content, PROMPT_TEXT) };
+        return { ...decision, messages: rewritten };
+      }),
+    );
+  }
+
   ctx.effect(() => {
-    ctx.tools.register(profileTool);
+    ctx.tools.register(profileToolOf(channel));
   });
 
   // 会话投影：DSH 0.2.2 起 register() 返回「可调用 disposer + thenable」句柄，
