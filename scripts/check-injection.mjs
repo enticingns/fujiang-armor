@@ -21,7 +21,11 @@ const MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
 const LOG_NAME = "session.v4.jsonl.zstd";
 
 // 判定标记：取内置提示词的首句与黑名单标题。
-const KERNEL_MARKERS = ["You are 富江", "## Blacklist"];
+// 0.7.0 起提示词内核自称「年前」（激活词同步），旧会话日志仍可能是「富江」，两者都认。
+const KERNEL_MARKERS = ["## Blacklist"];
+const KERNEL_HEAD_RE = /You are (?:年前|富江)/g;
+const CURRENT_KERNEL_HEAD = "You are 年前";
+const LEGACY_KERNEL_HEAD = "You are 富江";
 const TOOL_NAME = "fujiang_profile";
 
 function parseArgs(argv) {
@@ -119,13 +123,22 @@ function inspect(entry) {
     : [];
   const config = requestHeader?.data?.header?.config ?? {};
 
-  const kernelHits = KERNEL_MARKERS.map((marker) => ({
-    marker,
-    count: combinedText.split(marker).length - 1,
-  }));
-  const inSystem = KERNEL_MARKERS.every((marker) => systemText.includes(marker));
-  const inUser = KERNEL_MARKERS.every((marker) => userText.includes(marker));
+  const headHits = (text) => (text.match(KERNEL_HEAD_RE) || []);
+  const systemHeads = headHits(systemText);
+  const userHeads = headHits(userText);
+  const allHeads = systemHeads.concat(userHeads);
+  const currentHeads = allHeads.filter((h) => h === CURRENT_KERNEL_HEAD);
+  const legacyHeads = allHeads.filter((h) => h === LEGACY_KERNEL_HEAD);
+  const kernelHits = [
+    { marker: CURRENT_KERNEL_HEAD, count: currentHeads.length },
+    { marker: LEGACY_KERNEL_HEAD, count: legacyHeads.length },
+    ...KERNEL_MARKERS.map((marker) => ({ marker, count: combinedText.split(marker).length - 1 })),
+  ];
+  const hasKernel = (text, heads) => heads.length > 0 && KERNEL_MARKERS.every((marker) => text.includes(marker));
+  const inSystem = hasKernel(systemText, systemHeads);
+  const inUser = hasKernel(userText, userHeads);
   const channel = inSystem && inUser ? "both" : inSystem ? "system" : inUser ? "user" : "none";
+  const headCount = currentHeads.length + legacyHeads.length;
 
   return {
     sessionId: entry.sessionId,
@@ -141,8 +154,9 @@ function inspect(entry) {
     systemMessages: systemEvents.length,
     systemChars: systemText.length,
     kernelHits,
-    kernelInjected: kernelHits.every((hit) => hit.count > 0),
-    dualLayer: (kernelHits[0]?.count ?? 0) >= 2,
+    kernelInjected: (inSystem || inUser) && headCount > 0,
+    dualLayer: headCount >= 2,
+    kernelVariant: currentHeads.length ? "年前" : legacyHeads.length ? "富江(旧版提示词)" : null,
     channel,
     toolRegistered: tools.includes(TOOL_NAME),
     toolCount: tools.length,
@@ -159,8 +173,8 @@ function verdictOf(report) {
     : "  [X]  会话日志里没有 system/message —— 这条会话还没发出过模型请求");
   if (report.systemMessages > 0) {
     lines.push(report.kernelInjected
-      ? `  [OK] 内核已注入（通道：${report.channel}）：${report.kernelHits.map((h) => `${h.marker}×${h.count}`).join("，")}`
-      : "  [X]  内核未注入：system 与 user 两侧都找不到富江内核文本");
+      ? `  [OK] 内核已注入（通道：${report.channel}，内核：${report.kernelVariant}）：${report.kernelHits.filter((h) => h.count > 0).map((h) => `${h.marker}×${h.count}`).join("，")}`
+      : "  [X]  内核未注入：system 与 user 两侧都找不到年前/富江内核文本");
     lines.push(report.dualLayer
       ? "  [OK] 双段注入生效（Order 100 内核 + Order 200 镜像各一份）"
       : "  [i]  单段注入（DUAL_LAYER_INJECTION=false 或只命中一段）");
@@ -178,7 +192,7 @@ function printHuman(report) {
   console.log("会话：" + report.sessionId);
   console.log("工作目录：" + (report.cwd ?? "?") + "   preset：" + (report.agentPreset ?? "?"));
   console.log("日志：" + report.file);
-  console.log("系统提示词开头：" + JSON.stringify(report.promptHead));
+  console.log("内核提示词开头：" + JSON.stringify(report.promptHead));
   console.log("");
   for (const line of verdictOf(report)) console.log(line);
   console.log("");

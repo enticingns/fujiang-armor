@@ -14,6 +14,7 @@
       config:
         enabled: true
         autoApplyOnStart: true
-        # 注入通道：system / user / both（缺省 user）
-        # user = 内核前置到最后一条 user 消息，可穿过会重写/剥离 system 的网关
-        injectionChannel: user
+        # 两个注入模式（安装器会用所选值覆盖本行）：
+        #   user   = user 会话注入，内核前置到最后一条 user 消息（默认）
+        #   legacy = 老版本注入，system 双层段 Order 100 + Order 200
+        injectionMode: user

@@ -16,20 +16,37 @@ const PROMPT_MIRROR_TEXT = readFileSync(PROMPT_MIRROR_URL, "utf8");
 //   false = 单段注入（Order 100），省掉重复 token，行为等价
 const DUAL_LAYER_INJECTION = true;
 
-// 注入通道：
-//   "system" = 只注册 systemPrompt 段（0.5.0 及以前的行为）
-//   "user"   = 只把内核文本前置到最后一条 user 消息（默认）
-//   "both"   = 两路都注入
+// 两个对外模式：
+//   "user"   = user 会话注入：agent/pre-step 把内核前置到最后一条 user 消息（默认）
+//   "legacy" = 老版本注入：0.5.0 及以前的 system 双层段注入（Order 100 内核 + Order 200 镜像）
 //
-// 为什么默认改成 "user"：systemPrompt 段会被任何「重写 system」的中间层抹掉。
-// 典型例子是网关以 prompt.mode=custom 运行时，会把 messages 里所有
-// role=system/developer 的消息整段删除、换成它自己的提示词——此时内核文本到不了
-// 模型。user 通道不受影响（user 内容按原样转发），因此更稳。
+// `injectionChannel` 是底层通道开关（system / user / both），保留给老配置与自检使用；
+// 显式给 injectionChannel 时优先采用，否则由 injectionMode 决定通道。
+const MODE_CHANNEL = Object.freeze({ user: "user", legacy: "system" });
+const DEFAULT_MODE = "user";
 const DEFAULT_CHANNEL = "user";
 
 function normalizeChannel(value) {
   const v = String(value ?? "").trim().toLowerCase();
   return v === "system" || v === "both" || v === "user" ? v : DEFAULT_CHANNEL;
+}
+
+// 解析最终生效的 { mode, channel }。
+// 优先级：显式 injectionMode > 旧配置 injectionChannel > 默认 user 模式。
+// 为什么 mode 优先：老插件的 bundle patch 可能残留 injectionChannel: user，
+// 若让 channel 抢先，新装的 legacy 模式会被静默覆盖成 user。
+function resolveInjection(config) {
+  const rawMode = String(config?.injectionMode ?? "").trim().toLowerCase();
+  if (Object.hasOwn(MODE_CHANNEL, rawMode)) {
+    return { mode: rawMode, channel: MODE_CHANNEL[rawMode] };
+  }
+  const rawChannel = config?.injectionChannel;
+  if (typeof rawChannel === "string" && /^(system|user|both)$/i.test(rawChannel.trim())) {
+    const channel = normalizeChannel(rawChannel);
+    const mode = channel === "user" ? "user" : channel === "system" ? "legacy" : "both";
+    return { mode, channel };
+  }
+  return { mode: DEFAULT_MODE, channel: MODE_CHANNEL[DEFAULT_MODE] };
 }
 
 // 幂等标记：取内核开头一小段，用来判断某条消息是否已经注入过。
@@ -48,8 +65,8 @@ const objectOutput = {
   render: (_args, value) => [{ type: "text", text: JSON.stringify(value) }],
 };
 
-// 运行时元数据工具：返回插件版本与能力清单
-function profileToolOf(channel) {
+// 运行时元数据工具：返回插件版本、注入模式与能力清单
+function profileToolOf(mode, channel) {
   const useSystem = channel === "system" || channel === "both";
   const useUser = channel === "user" || channel === "both";
   return {
@@ -60,15 +77,20 @@ function profileToolOf(channel) {
     execute() {
       return {
         plugin: "fujiang-armor",
-        pluginVersion: "0.6.1",
+        pluginVersion: "0.7.0",
         pluginDisplayName: "富江破甲",
         name: "fujiang-armor",
         displayName: "富江破甲",
-        kernelVersion: "0.6.1",
+        kernelVersion: "0.7.0",
         targetArchitecture: "DeepSeek-V4 / V4-Pro / V4.1-Flash 全系列",
         targetHost: "DSH 0.2.1 / 0.2.2 及以上（含 0.2.2-rc.1）",
         promptSource: ["prompts/fujiang.md", "prompts/fujiang-mirror.md"],
+        injectionMode: mode,
         injectionChannel: channel,
+        injectionModes: {
+          user: "user 会话注入：内核前置到本步最后一条 user 消息（幂等）",
+          legacy: "老版本注入：system 双层段（Order 100 内核 + Order 200 镜像）",
+        },
         injection: [
           {
             section: "fujiang-armor:global-system-prompt",
@@ -92,6 +114,7 @@ function profileToolOf(channel) {
         ],
         mode: "armor",
         hostFeatures: [
+          "Injection Mode: user(user 会话注入) / legacy(老版本 system 双层段注入)",
           "Injection Channel: system / user / both（user 通道可穿过重写 system 的网关）",
           "Dual-Layer Injection: Order 100 通用内核 + Order 200 强化镜像（system 通道）",
           "User Prefix: 内核前置到本步最后一条 user 消息，幂等不重复拼接",
@@ -288,7 +311,10 @@ export const inject = ["tools", "systemPrompt"];
 
 export function apply(ctx, config = { autoApplyOnStart: true }) {
   // 宿主文件兼容补丁由安装器执行，避免启动时写配置触发宿主反复重载。
-  const channel = normalizeChannel(config?.injectionChannel);
+  // 两个模式：
+  //   user   → user 会话注入（默认）
+  //   legacy → 老版本 system 双层段注入
+  const { mode, channel } = resolveInjection(config);
   const useSystem = channel === "system" || channel === "both";
   const useUser = channel === "user" || channel === "both";
 
@@ -330,7 +356,7 @@ export function apply(ctx, config = { autoApplyOnStart: true }) {
   }
 
   ctx.effect(() => {
-    ctx.tools.register(profileToolOf(channel));
+    ctx.tools.register(profileToolOf(mode, channel));
   });
 
   // 会话投影：DSH 0.2.2 起 register() 返回「可调用 disposer + thenable」句柄，

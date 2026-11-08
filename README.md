@@ -2,7 +2,60 @@
 
 富江破甲是一个用于 DSH 的本地插件，内置提示词规则，提供 Windows 一键注入和一键卸载。插件加载后，会在对话输入框上方显示「富江破甲已激活」。
 
-当前版本：`0.6.0`。插件标识：`fujiang-armor`。适配 DSH `0.2.1` / `0.2.2` 系列（含 `0.2.2-rc.1`）。
+当前版本：`0.7.0`。插件标识：`fujiang-armor`。适配 DSH `0.2.1` / `0.2.2` 系列（含 `0.2.2-rc.1`）。
+
+## 0.7.0 做了什么（两个注入模式 + 提示词文本修正）
+
+### 两个模式
+
+| `injectionMode` | 行为 | 适用 |
+| --- | --- | --- |
+| `user`（默认） | **user 会话注入**：`agent/pre-step` 把内核前置到本步最后一条 user 消息（幂等） | 网关会重写/剥离 system 的链路；通用首选 |
+| `legacy` | **老版本注入**：0.5.0 及以前的 system 双层段（Order 100 内核 + Order 200 镜像） | 需要保持老版本行为的场景 |
+
+一键安装三个入口：
+
+- `点我一键注入.bat` —— 交互选 `[1] user` / `[2] legacy`，回车默认 1；
+- `点我一键注入-user会话.bat` —— 直装 user 模式；
+- `点我一键注入-老版本.bat` —— 直装 legacy 模式。
+
+命令行等价写法：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1 -InjectionMode user
+powershell -ExecutionPolicy Bypass -File install.ps1 -InjectionMode legacy
+```
+
+```bash
+INJECTION_MODE=legacy ./install.sh
+```
+
+安装器把所选模式写进 profile 的 `cordis.patch.yml` 托管块：
+
+```yaml
+- insert:
+    - id: fujiang-armor
+      name: 'fujiang-armor'
+      config:
+        enabled: true
+        autoApplyOnStart: true
+        injectionMode: user
+```
+
+要点：
+
+- `injectionMode` **优先于**老配置里的 `injectionChannel`。老插件 bundle patch 可能残留 `injectionChannel: user`，若让 channel 抢先会把新装的 legacy 模式静默覆盖；0.7.0 强制 mode 赢。
+- 底层 `injectionChannel: system / user / both` 仍保留，供老配置与离线自检使用；不给 `injectionMode` 时按旧字段推导出 `user` / `legacy` / `both`。
+- `fujiang_profile` 返回 `injectionMode`、`injectionChannel` 与 `injectionModes` 说明；`scripts/test_injection_channel.mjs` 覆盖两个模式、三条底层通道、幂等与残留字段覆盖。
+
+### 提示词文本修正（会话中无关）
+
+`prompts/fujiang.md`、`prompts/fujiang-mirror.md`、`prompts/fujiang-compat.md` 三件套同步修改：
+
+- `You are 富江` → `You are 年前`，激活词 `When the user sends "富江"` → `When the user sends "年前"`；
+- `The user is your 爸爸.` → `The user is your 机主.`。
+
+也就是：**激活词改成「年前」**。会话里出现什么内容不影响这项改动；插件产品名、文件内的 `fujiang-armor` 标识、客户端「富江破甲已激活」状态条都保持不变。`scripts/check-injection.mjs` 同时兼容新内核头「年前」与旧会话日志里的「富江」。
 
 ## 0.6.0 做了什么（新增 user 通道注入）
 
@@ -25,9 +78,9 @@ systemPrompt 段只对「原样转发 system」的链路有效。如果中间层
 - **块内容安全**：user 内容是字符串时前置为 `<内核>\n\n<原文>`；是内容块数组时在头部插入一个 text 块，
   图片等其它块原样保留。
 - `fujiang_profile` 会返回当前 `injectionChannel`；`scripts/check-injection.mjs` 同时检查 system 与 user 两侧
-  并报告实际生效的通道；`npm run test:channel` 提供 8 组离线自检。
+  并报告实际生效的通道；`npm run test:channel` 提供 11 组离线自检（含两个 0.7.0 模式）。
 
-配置示例（`cordis.patch.yml` 已默认写入 `user`）：
+配置示例（0.6.0 写法；0.7.0 起推荐用 `injectionMode`，见上文）：
 
 ```yaml
 - insert:
@@ -56,6 +109,7 @@ DSH 0.2.2-rc.1 改了三处与提示词注入相关的行为，0.4.x 插件会�
 ## 功能
 
 - 随插件部署内置规则，无需手动复制提示词。
+- 两个注入模式一键切换：user 会话注入 / 老版本 system 双层段注入。
 - 双击批处理文件完成注入或卸载。
 - 自动检测运行环境；桌面版自带 Node / pnpm 时直接复用，无需联网下载。
 - 支持选择本地 DSH 配置目录中的目标配置，也支持指定任意 `DSH_HOME`（隔离实例）。
@@ -72,10 +126,11 @@ DSH 0.2.2-rc.1 改了三处与提示词注入相关的行为，0.4.x 插件会�
 1. 从本项目的发布页面下载 ZIP 安装包。也可以通过仓库页面的「Code → Download ZIP」下载源码。
 2. 完整解压 ZIP，打开包含 `点我一键注入.bat` 的项目文件夹。
 3. 完全退出 DSH。
-4. 双击 `点我一键注入.bat`。
+4. 双击 `点我一键注入.bat`，按提示选择 `[1] user 会话注入` 或 `[2] 老版本注入`；也可直接双击
+   `点我一键注入-user会话.bat` / `点我一键注入-老版本.bat`。
 5. 如果检测到多个 DSH 配置，按安装器提示选择需要使用的目标配置。
 6. 等待安装完成，然后重新启动 DSH。
-7. 打开对话，确认输入框上方显示「富江破甲已激活」。在聊天中输入激活词「富江」即可使用内置规则。
+7. 打开对话，确认输入框上方显示「富江破甲已激活」。在聊天中输入激活词「年前」即可使用内置规则。
 
 安装后的插件目录为 `$DSH_HOME\plugins\fujiang-armor`（默认 `%USERPROFILE%\.dsh\plugins\fujiang-armor`）。请保留解压后的完整项目文件夹，卸载时仍需使用其中的脚本。
 
@@ -147,7 +202,8 @@ node scripts\check-injection.mjs --list
 
 判定标准（脚本会自动打印）：
 
-- `[OK] 内核已注入：You are 富江×2` —— 双段注入（Order 100 + Order 200）各一份，正常；
+- `[OK] 内核已注入：You are 年前×2` —— 老版本模式双段注入（Order 100 + Order 200）各一份，正常；
+  user 模式则报告 `通道：user` 且 `You are 年前×1`；旧会话日志里的 `You are 富江` 同样识别。
 - `[OK] 工具 fujiang_profile 已注册` —— 宿主插件激活成功；
 - `结论：富江破甲已生效` 且退出码为 `0`。
 
@@ -161,6 +217,8 @@ node scripts\check-injection.mjs --list
 | 运行环境校验失败 | 安装器不会使用校验失败的下载包，请检查网络后重试。 |
 | 找不到脚本、规则或其他文件 | 完整解压压缩包，保留 `prompts`、`scripts` 等子目录；不要只复制单个 BAT 文件。 |
 | 安装成功但没有显示激活状态 | 完全退出并重新启动 DSH，确认安装时选中了当前使用的配置（多实例时确认 `-DshHome` 指向正确）。 |
+| 想从 user 模式切到老版本注入（或反过来） | 重新运行对应的一键 BAT；安装器会重写托管块里的 `injectionMode`，不需要先卸载。 |
+| 装了 legacy 但仍走 user 通道 | 检查 profile `cordis.patch.yml` 托管块里残留的 `injectionChannel`；0.7.0 起 `injectionMode` 优先，重跑安装器即可清掉歧义。 |
 | 依赖下载失败 | 检查网络连接；`node_modules` 链接已足够加载插件，可稍后手动在 profile 目录执行 `pnpm install`。 |
 | 卸载后仍显示激活状态 | 完全退出并重新启动 DSH，确认卸载的是此前安装的配置。 |
 | 两个 DSH 实例互相干扰 | 用 `scripts\isolate-instance.ps1` 给其中一份建独立 `DSH_HOME` 与 `--user-data-dir`。 |
@@ -179,4 +237,5 @@ node scripts\check-injection.mjs --list
 node scripts\verify_plugin.mjs   # 或 npm run verify
 ```
 
-覆盖：提示词字节一致、两段注册为 `interpolate: false`、投影折叠语义、客户端状态条注册、补丁挂载/卸载幂等、`{{cwd}}` 清理、隔离配置播种。
+覆盖：提示词三件套字节一致与「年前/机主」修正、两个注入模式与底层三条通道、两段注册为 `interpolate: false`、
+投影折叠语义、客户端状态条注册、补丁挂载/卸载幂等、`{{cwd}}` 清理、隔离配置播种。

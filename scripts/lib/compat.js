@@ -26,6 +26,15 @@ const MARK_BEGIN_RE = /^[ \t]*# >>> fujiang-armor/m;
 const MARK_END_RE = /^[ \t]*# <<< fujiang-armor/m;
 const LEGACY_MARK = "# [fujiang-armor]";
 
+// 两个对外注入模式（与 index.js 的 resolveInjection 保持一致）。
+//   user   = user 会话注入（默认）
+//   legacy = 老版本 system 双层段注入
+const INJECTION_MODES = new Set(["user", "legacy"]);
+export function normalizeInjectionMode(value) {
+  const v = String(value ?? "").trim().toLowerCase();
+  return INJECTION_MODES.has(v) ? v : "user";
+}
+
 // ---------------------------------------------------------------- 基础工具
 
 export function findDshHome() {
@@ -261,7 +270,7 @@ export function stripAllInsertRows(text) {
   return { text, action: "already" };
 }
 
-function managedBlock(pluginName) {
+function managedBlock(pluginName, mode = "user") {
   return [
     MARK_BEGIN,
     "- insert:",
@@ -270,6 +279,7 @@ function managedBlock(pluginName) {
     "      config:",
     "        enabled: true",
     "        autoApplyOnStart: true",
+    `        injectionMode: ${normalizeInjectionMode(mode)}`,
     MARK_END,
   ];
 }
@@ -319,11 +329,11 @@ function normalizeBlankLines(text) {
 }
 
 /** 生成挂载后的 profile 补丁文本。 */
-export function mountProfilePatch(text, pluginName = PLUGIN_NAME) {
+export function mountProfilePatch(text, pluginName = PLUGIN_NAME, mode = "user") {
   const base = normalizeBlankLines(dropOwnedRows(text, pluginName));
   const identity = ensureHarnessIdentityOff(base);
   const withIdentity = identity.text;
-  const block = managedBlock(pluginName).join("\n");
+  const block = managedBlock(pluginName, mode).join("\n");
   const joined = normalizeBlankLines(withIdentity) === "" ? block : `${normalizeBlankLines(withIdentity)}\n\n${block}`;
   return { text: `${joined}\n`, actions: [identity.action, "mount"] };
 }
@@ -495,15 +505,19 @@ function patchFileOf(profileDir) {
 
 /**
  * 挂载插件：修 persona、去掉重复挂载、开启 includeHarnessIdentity: false、追加托管块。
+ * @param {string[]} profileDirs
+ * @param {string} pluginName
+ * @param {string} mode user(user 会话注入) / legacy(老版本 system 双层段注入)
  * @returns 每个 profile 的变更明细
  */
-export function mountProfiles(profileDirs, pluginName = PLUGIN_NAME) {
+export function mountProfiles(profileDirs, pluginName = PLUGIN_NAME, mode = "user") {
+  const injectionMode = normalizeInjectionMode(mode);
   const reports = [];
   for (const profileDir of profileDirs) {
     const file = patchFileOf(profileDir);
     const before = fs.existsSync(file) ? readText(file) : "[]\n";
     const cwd = stripCwdPersona(before);
-    const mounted = mountProfilePatch(cwd.text, pluginName);
+    const mounted = mountProfilePatch(cwd.text, pluginName, injectionMode);
     const after = mounted.text;
     const changed = after !== before;
     if (changed) {
@@ -514,6 +528,7 @@ export function mountProfiles(profileDirs, pluginName = PLUGIN_NAME) {
       profileDir,
       file,
       changed,
+      injectionMode,
       cwdRemoved: cwd.removed,
       actions: mounted.actions,
     });
@@ -546,6 +561,7 @@ export function unmountProfiles(profileDirs, pluginName = PLUGIN_NAME) {
 export function applyAllPatches(options = {}) {
   const dshHome = options.dshHome || findDshHome();
   const pluginName = options.pluginName || PLUGIN_NAME;
+  const mode = normalizeInjectionMode(options.mode);
   const version = detectDshVersion(dshHome);
   const profileDirs = options.profiles && options.profiles.length ? options.profiles : listProfiles(dshHome);
 
@@ -578,7 +594,8 @@ export function applyAllPatches(options = {}) {
     dshHome,
     version: version.version,
     versionSource: version.source,
-    profiles: mountProfiles(profileDirs, pluginName),
+    injectionMode: mode,
+    profiles: mountProfiles(profileDirs, pluginName, mode),
     homePatch: homeFix,
     phase1: applyPhase1Patch(dshHome),
     warnings,
@@ -619,16 +636,23 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const [, , command, dshHome, ...rawRest] = process.argv;
     if (!command) {
       throw new Error(
-        "Usage: node scripts/lib/compat.js <mount|unmount|link|unlink|check|seed> <dshHome> [spec|profileDir ...] [--out <file>]",
+        "Usage: node scripts/lib/compat.js <mount|unmount|link|unlink|check|seed> <dshHome> [spec|profileDir ...] [--mode user|legacy] [--out <file>]",
       );
     }
 
     // --out <file>：把结果写成 UTF-8 文件，供调用方用 UTF-8 读取（推荐路径）。
+    // --mode <user|legacy>：mount 子命令选择两个注入模式之一。
     let outFile = null;
+    let mode = "user";
     const rest = [];
     for (let i = 0; i < rawRest.length; i += 1) {
       if (rawRest[i] === "--out") {
         outFile = rawRest[i + 1];
+        i += 1;
+        continue;
+      }
+      if (rawRest[i] === "--mode") {
+        mode = rawRest[i + 1] ?? "user";
         i += 1;
         continue;
       }
@@ -643,7 +667,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       result = { dshHome: home, version: version.version, versionSource: version.source, profiles: listProfiles(home) };
     } else if (command === "mount") {
       const dirs = rest.length ? rest.map((entry) => path.resolve(entry)) : listProfiles(home);
-      result = applyAllPatches({ dshHome: home, profiles: dirs });
+      result = applyAllPatches({ dshHome: home, profiles: dirs, mode });
     } else if (command === "unmount") {
       const dirs = rest.length ? rest.map((entry) => path.resolve(entry)) : listProfiles(home);
       result = { dshHome: home, profiles: unmountProfiles(dirs) };

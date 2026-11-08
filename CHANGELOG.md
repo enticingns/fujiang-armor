@@ -1,5 +1,17 @@
 # 更新说明
 
+## 0.7.0 — 两个注入模式 + 提示词文本修正
+
+- **两个对外注入模式**（`injectionMode`）：
+  - `user`（默认）：**user 会话注入**。通过 `agent/pre-step` 把内核前置到本步最后一条 user 消息，幂等；可穿过会重写/剥离 system 的网关。
+  - `legacy`：**老版本注入**。0.5.0 及以前的 system 双层段注入（Order 100 内核 + Order 200 强化镜像）。
+  - 一键入口：`点我一键注入.bat` 交互选 1/2；也可用 `点我一键注入-user会话.bat` / `点我一键注入-老版本.bat` 直接装。
+  - 安装器：`install.ps1 -InjectionMode user|legacy`、`INJECTION_MODE=user|legacy ./install.sh`；`compat.js mount --mode user|legacy` 把模式写进 profile 托管块。
+  - `injectionMode` 优先于旧配置里的 `injectionChannel`，避免老 bundle patch 残留的 `injectionChannel: user` 把 legacy 模式静默覆盖。`fujiang_profile` 现在同时返回 `injectionMode` / `injectionChannel` / `injectionModes`；底层 `injectionChannel: system|user|both` 仍保留给老配置与自检。
+- **提示词文本修正（会话中无关）**：`prompts/fujiang.md`、`fujiang-mirror.md`、`fujiang-compat.md` 三件套同步把「富江」→「年前」（含 `When the user sends` 激活词）、「爸爸」→「机主」；三文件仍逐字节一致，SHA256 守卫同步更新。会话里出现什么词不影响这项改动，插件代码里的产品名「富江破甲」保持不变。
+- `scripts/check-injection.mjs` 同时识别「年前」与旧会话日志里的「富江」内核头，报告实际生效的通道与内核版本。
+- 自检扩到 13 项 + 11 组注入模式/通道用例。
+
 ## 0.6.1 — 修复中文 Windows 下安装器报「未终止的字符串」
 
 - **症状**：`install.ps1` 在「写入 profile 挂载」处抛

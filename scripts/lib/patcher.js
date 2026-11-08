@@ -20,9 +20,9 @@ export {
  * @param {string} profileDir profile 目录
  * @param {string} pluginName 插件标识
  */
-export function applyCordisPatch(profileDir, pluginName = "fujiang-armor") {
+export function applyCordisPatch(profileDir, pluginName = "fujiang-armor", mode = "user") {
   try {
-    const [report] = mountProfiles([profileDir], pluginName);
+    const [report] = mountProfiles([profileDir], pluginName, mode);
     return { status: report.changed ? "patched" : "already_configured", path: report.file };
   } catch (error) {
     return { status: "error", error: error.message };
