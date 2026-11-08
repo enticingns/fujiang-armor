@@ -60,11 +60,11 @@ function profileToolOf(channel) {
     execute() {
       return {
         plugin: "fujiang-armor",
-        pluginVersion: "0.6.0",
+        pluginVersion: "0.6.1",
         pluginDisplayName: "富江破甲",
         name: "fujiang-armor",
         displayName: "富江破甲",
-        kernelVersion: "0.6.0",
+        kernelVersion: "0.6.1",
         targetArchitecture: "DeepSeek-V4 / V4-Pro / V4.1-Flash 全系列",
         targetHost: "DSH 0.2.1 / 0.2.2 及以上（含 0.2.2-rc.1）",
         promptSource: ["prompts/fujiang.md", "prompts/fujiang-mirror.md"],

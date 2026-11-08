@@ -1,5 +1,19 @@
 # 更新说明
 
+## 0.6.1 — 修复中文 Windows 下安装器报「未终止的字符串」
+
+- **症状**：`install.ps1` 在「写入 profile 挂载」处抛
+  `ConvertFrom-Json : 传入了未终止的字符串`，安装中断（此时补丁已写入，但依赖与 `node_modules` 链接没做，插件加载不到）。
+- **原因**：安装器直接捕获 node 子进程的 stdout 再解析 JSON。Windows PowerShell 按**控制台代码页**解码，
+  中文系统是 GBK，node 输出的 UTF-8 中文被解坏，末尾引号会被吞掉，JSON 就此残缺。
+- **修复**：
+  - `compat.js` 新增 `--out <file>`：结果写成 UTF-8 文件，安装器用 UTF-8 读回，不再解析 stdout；
+  - stdout 一律转义为纯 ASCII（`\uXXXX`），任何代码页下都不会被解坏；
+  - 结果解析失败不再中断安装，挂载/依赖以退出码为准；
+  - `isolate-instance.ps1` 的配置播种改为 `compat.js seed` 子命令直接写文件，不再经过 stdout。
+- **另外**：`install.ps1` / `isolate-instance.ps1` 丢失 UTF-8 BOM 会让 PowerShell 5.1 按 ANSI 解析中文、
+  直接语法错误；已恢复 BOM，并在 `verify_plugin.mjs` 增加两项自检（BOM 检查、stdout 必须纯 ASCII），
+  自检总数 12 项。同时修好 0.6.0 遗留的测试桩（mock `ctx.on`、system 通道需显式指定）。
 ## 0.6.0 — 新增 user 通道注入（可穿过重写 system 的网关）
 
 ### 为什么改

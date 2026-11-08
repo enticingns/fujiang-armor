@@ -125,13 +125,11 @@ if ($SeedFrom) {
                     $compatJs = Join-Path $PSScriptRoot 'lib\compat.js'
                     $seeded = $false
                     if ($nodeBin -and (Test-Path -LiteralPath $compatJs)) {
-                        $code = 'import(process.argv[1]).then(m=>{const fs=require("fs");const t=fs.readFileSync(process.argv[2],"utf8");const c=m.stripCwdPersona(t);process.stdout.write(m.stripAllInsertRows(c.text))})'
+                        # 由 node 直接写目标文件：不经过 stdout，避免控制台代码页（GBK）把中文补丁内容解坏
                         try {
-                            $out = & $nodeBin -e $code ([uri]::new($compatJs).AbsoluteUri) $patchSrc 2>$null
-                            if ($LASTEXITCODE -eq 0 -and $out) {
-                                [System.IO.File]::WriteAllText($patchDst, (($out -join "`n").TrimEnd() + "`n"), (New-Object System.Text.UTF8Encoding($false)))
-                                $seeded = $true
-                            }
+                            $seedArgs = @($compatJs, 'seed', $patchSrc, $patchDst)
+                            & $nodeBin @seedArgs 2>&1 | Out-Null
+                            if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $patchDst)) { $seeded = $true }
                         } catch { }
                     }
                     if (-not $seeded) {

@@ -19,7 +19,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $pluginName  = 'fujiang-armor'
 $pluginLabel = '富江破甲'
-$pluginVersion = '0.6.0'
+$pluginVersion = '0.6.1'
 $srcDir = $PSScriptRoot
 
 # ---------- 输出辅助 ----------
@@ -27,6 +27,37 @@ function Write-Step { param([string]$Msg) Write-Host "`n==> $Msg" -ForegroundCol
 function Write-Ok   { param([string]$Msg) Write-Host "    [OK] $Msg" -ForegroundColor Green }
 function Write-Warn { param([string]$Msg) Write-Host "    [!] $Msg" -ForegroundColor Yellow }
 function Write-Err  { param([string]$Msg) Write-Host "    [X] $Msg" -ForegroundColor Red }
+
+# 调用 compat.js 并读回它的 JSON 结果。
+# 不能直接捕获子进程 stdout：PowerShell 按控制台代码页解码，中文 Windows（GBK）下
+# node 输出的 UTF-8 中文会被解成乱码、连引号都可能被吃掉，ConvertFrom-Json 随即报
+# 「传入了未终止的字符串」。所以让 node 把结果写成 UTF-8 文件（--out），再用 UTF-8 读回。
+function Invoke-Compat {
+    param(
+        [Parameter(Mandatory = $true)][string]$Node,
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+    $outFile = Join-Path ([System.IO.Path]::GetTempPath()) ("fujiang-compat-{0}.json" -f ([guid]::NewGuid().ToString('N')))
+    try {
+        $argv = $Arguments + @('--out', $outFile)
+        $native = & $Node @argv 2>&1
+        $exit = $LASTEXITCODE
+        $data = $null
+        if (Test-Path -LiteralPath $outFile) {
+            $text = [System.IO.File]::ReadAllText($outFile, [System.Text.Encoding]::UTF8)
+            if ($text.Trim()) {
+                try { $data = $text | ConvertFrom-Json } catch { $data = $null }
+            }
+        }
+        return [pscustomobject]@{
+            ExitCode = $exit
+            Data     = $data
+            Output   = (($native | ForEach-Object { "$_" }) -join ' ')
+        }
+    } finally {
+        Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
+    }
+}
 
 # pnpm-workspace.yaml 的 allowBuilds 里出现重复键时 pnpm 会直接报
 # "duplicated mapping key" 退出。这里做一次幂等修复：去重、丢弃被截断的 "pkg@https" 残键。
@@ -226,11 +257,11 @@ if ($pnpmCmd) { Write-Ok "pnpm：$pnpmCmd" } else { Write-Warn '未找到 pnpm�
 
 # ---------- [4] 版本探测 ----------
 Write-Step '探测 DSH 版本'
+$compatJs = Join-Path $srcDir 'scripts\lib\compat.js'
 $version = $null
 try {
-    $checkRaw = & $nodeBin (Join-Path $srcDir 'scripts\lib\compat.js') 'check' $targetHome 2>&1
-    $check = ($checkRaw | Where-Object { $_ -match '^\{' } | Select-Object -Last 1) | ConvertFrom-Json
-    $version = $check.version
+    $check = Invoke-Compat -Node $nodeBin -Arguments @($compatJs, 'check', $targetHome)
+    if ($check.Data) { $version = $check.Data.version }
 } catch { Write-Warn "版本探测失败：$($_.Exception.Message)" }
 
 if ($version) {
@@ -262,37 +293,41 @@ Write-Ok "插件已复制到：$destDir"
 
 # ---------- [6] 挂载到 profile（版本自适应） ----------
 Write-Step '写入 profile 挂载'
-$mountArgs = @((Join-Path $srcDir 'scripts\lib\compat.js'), 'mount', $targetHome) + $profileDirs
-$mountRaw = & $nodeBin @mountArgs 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Err "挂载失败：$($mountRaw -join ' ')"
+$mount = Invoke-Compat -Node $nodeBin -Arguments (@($compatJs, 'mount', $targetHome) + $profileDirs)
+if ($mount.ExitCode -ne 0) {
+    Write-Err "挂载失败：$($mount.Output)"
     exit 1
 }
-$mount = ($mountRaw | Where-Object { $_ -match '^\{' } | Select-Object -Last 1) | ConvertFrom-Json
-foreach ($report in $mount.profiles) {
-    $name = Split-Path $report.profileDir -Leaf
-    if ($report.cwdRemoved -and $report.cwdRemoved.Count -gt 0) {
-        Write-Ok "[$name] 已清除失效的 {{cwd}} persona 子句（0.2.2 起会导致提示词组装失败）"
+if ($mount.Data) {
+    foreach ($report in $mount.Data.profiles) {
+        $name = Split-Path $report.profileDir -Leaf
+        if ($report.cwdRemoved -and $report.cwdRemoved.Count -gt 0) {
+            Write-Ok "[$name] 已清除失效的 {{cwd}} persona 子句（0.2.2 起会导致提示词组装失败）"
+        }
+        if ($report.changed) { Write-Ok "[$name] cordis.patch.yml 已更新（$($report.actions -join ', ')）" }
+        else { Write-Ok "[$name] cordis.patch.yml 已是最新，无需改动" }
     }
-    if ($report.changed) { Write-Ok "[$name] cordis.patch.yml 已更新（$($report.actions -join ', ')）" }
-    else { Write-Ok "[$name] cordis.patch.yml 已是最新，无需改动" }
+    foreach ($warning in $mount.Data.warnings) { Write-Warn $warning }
+    if ($mount.Data.homePatch) { Write-Ok "已修复 home 级补丁中的 {{cwd}}：$($mount.Data.homePatch.file)" }
+} else {
+    Write-Warn '挂载已执行（退出码 0），但结果文件无法解析；不影响挂载本身'
 }
-foreach ($warning in $mount.warnings) { Write-Warn $warning }
-if ($mount.homePatch) { Write-Ok "已修复 home 级补丁中的 {{cwd}}：$($mount.homePatch.file)" }
 
 # ---------- [7] 依赖与 node_modules ----------
 Write-Step '写入依赖声明'
-$linkArgs = @((Join-Path $srcDir 'scripts\lib\compat.js'), 'link', $targetHome, "file:../../plugins/$pluginName") + $profileDirs
-$linkRaw = & $nodeBin @linkArgs 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Err "依赖写入失败：$($linkRaw -join ' ')"
+$link = Invoke-Compat -Node $nodeBin -Arguments (@($compatJs, 'link', $targetHome, "file:../../plugins/$pluginName") + $profileDirs)
+if ($link.ExitCode -ne 0) {
+    Write-Err "依赖写入失败：$($link.Output)"
     exit 1
 }
-$link = ($linkRaw | Where-Object { $_ -match '^\{' } | Select-Object -Last 1) | ConvertFrom-Json
-foreach ($report in $link.profiles) {
-    $name = Split-Path $report.profileDir -Leaf
-    if ($report.dependency.changed) { Write-Ok "[$name] dependencies += $pluginName" }
-    if ($report.bundles.changed) { Write-Ok "[$name] 已从 dsh.profile.bundles 移除同名项（避免重复挂载）" }
+if ($link.Data) {
+    foreach ($report in $link.Data.profiles) {
+        $name = Split-Path $report.profileDir -Leaf
+        if ($report.dependency.changed) { Write-Ok "[$name] dependencies += $pluginName" }
+        if ($report.bundles.changed) { Write-Ok "[$name] 已从 dsh.profile.bundles 移除同名项（避免重复挂载）" }
+    }
+} else {
+    Write-Warn '依赖声明已写入（退出码 0），但结果文件无法解析；不影响依赖本身'
 }
 
 function Set-PluginJunction {

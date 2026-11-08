@@ -49,12 +49,14 @@ test("both prompt sections register as literal (interpolate:false) sections", ()
   const projections = [];
   plugin.apply({
     effect: (fn) => fn(),
+    // 0.6.0 起 apply 还会注册 agent/pre-step 监听（user 通道），mock 需要提供 on
+    on: () => () => {},
     systemPrompt: { section: (section) => sections.push(section) },
     tools: { register: (tool) => tools.push(tool) },
     get: (name) => name === "sessionProjections"
       ? { register: (definition) => projections.push(definition) }
       : undefined,
-  }, { autoApplyOnStart: false });
+  }, { autoApplyOnStart: false, injectionChannel: "system" });
 
   assert.deepEqual(
     sections.map(({ name, order }) => ({ name, order })),
@@ -85,6 +87,7 @@ test("armor projection folds events and keeps the same reference otherwise", () 
   const projections = [];
   plugin.apply({
     effect: (fn) => fn(),
+    on: () => () => {},
     systemPrompt: { section: (section) => sections.push(section) },
     tools: { register: () => {} },
     get: () => ({ register: (definition) => projections.push(definition) }),
@@ -165,6 +168,30 @@ test("bundle patch never reintroduces the removed {{cwd}} persona variable", () 
     .join("\n");
   assert.ok(!effective.includes("personaSuffix"), "personaSuffix 必须保持缺省（0.2.2 起 {{cwd}} 无法解析）");
   assert.ok(!effective.includes("{{cwd}}"));
+});
+
+test("PowerShell 脚本必须带 UTF-8 BOM", () => {
+  // Windows PowerShell 5.1 按系统 ANSI 代码页解析无 BOM 的 .ps1：
+  // 中文会被解坏、连引号都可能被吃掉，脚本直接语法错误无法运行。
+  for (const file of [
+    "install.ps1",
+    "uninstall.ps1",
+    "scripts/ensure-runtime.ps1",
+    "scripts/isolate-instance.ps1",
+  ]) {
+    const head = [...load(file).subarray(0, 3)];
+    assert.deepEqual(head, [0xef, 0xbb, 0xbf], `${file} 缺少 UTF-8 BOM`);
+  }
+});
+
+test("compat.js 的 stdout JSON 必须是纯 ASCII", async () => {
+  // 调用方（PowerShell）捕获子进程 stdout 时按控制台代码页解码；
+  // 中文 Windows 是 GBK，直接输出 UTF-8 中文会被解坏并导致 JSON 解析失败。
+  const compat = await import("./lib/compat.js");
+  const json = compat.asciiJson({ warnings: ["DSH 0.2.2-rc.1：personaSuffix 中的 {{cwd}} 已失效"] });
+  assert.ok(/^[\x20-\x7e]*$/.test(json), "stdout JSON 含非 ASCII 字符");
+  const parsed = JSON.parse(json);
+  assert.equal(parsed.warnings[0], "DSH 0.2.2-rc.1：personaSuffix 中的 {{cwd}} 已失效");
 });
 
 test("compat layer mounts and unmounts the profile patch idempotently", async () => {
