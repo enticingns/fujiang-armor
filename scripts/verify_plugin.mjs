@@ -217,7 +217,7 @@ test("bundle patch writes the selected injection mode and stays cwd-free", () =>
   assert.ok(!effective.includes("{{cwd}}"));
 });
 
-test("PowerShell 脚本必须带 UTF-8 BOM", () => {
+test("PowerShell 脚本必须带 UTF-8 BOM 且能通过语法解析", () => {
   // Windows PowerShell 5.1 按系统 ANSI 代码页解析无 BOM 的 .ps1：
   // 中文会被解坏、连引号都可能被吃掉，脚本直接语法错误无法运行。
   for (const file of [
@@ -229,6 +229,25 @@ test("PowerShell 脚本必须带 UTF-8 BOM", () => {
     const head = [...load(file).subarray(0, 3)];
     assert.deepEqual(head, [0xef, 0xbb, 0xbf], `${file} 缺少 UTF-8 BOM`);
   }
+  // 0.7.0 曾因多写一个右花括号导致 install.ps1 整个解析失败。
+  // 静态括号守卫：字符串与本脚本里的花括号不参与计数。
+  const ps = load("install.ps1").toString("utf8");
+  let depth = 0;
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < ps.length; i += 1) {
+    const ch = ps[i];
+    if (ch === "'" && !inDouble) { inSingle = !inSingle; continue; }
+    if (ch === '"' && !inSingle) { inDouble = !inDouble; continue; }
+    if (inSingle || inDouble) continue;
+    if (ch === "#") { while (i < ps.length && ps[i] !== "\n") i += 1; continue; }
+    if (ch === "{") depth += 1;
+    else if (ch === "}") depth -= 1;
+    assert.ok(depth >= 0, `install.ps1: 第 ${ps.slice(0, i).split("\n").length} 行出现多余的右花括号`);
+  }
+  assert.equal(depth, 0, "install.ps1 花括号不平衡（安装器会直接 ParserError）");
+  assert.equal(inSingle, false, "install.ps1 单引号未闭合");
+  assert.equal(inDouble, false, "install.ps1 双引号未闭合");
 });
 
 test("compat.js 的 stdout JSON 必须是纯 ASCII", async () => {
