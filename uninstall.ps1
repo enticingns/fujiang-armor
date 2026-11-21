@@ -1,4 +1,4 @@
-﻿# 富江破甲卸载脚本（DSH 0.2.x / 0.2.2-rc.1 适配版）
+﻿# 富江破甲卸载脚本（DSH 0.2.x / 0.2.2-rc.5 适配版）
 #
 # 用法：
 #   .\uninstall.ps1                                  # 卸载默认 DSH（$env:DSH_HOME 或 %USERPROFILE%\.dsh）

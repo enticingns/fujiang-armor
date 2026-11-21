@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 富江破甲卸载脚本（DSH 0.2.x / 0.2.2-rc.1 适配版）
+# 富江破甲卸载脚本（DSH 0.2.x / 0.2.2-rc.5 适配版）
 #
 # 用法：
 #   ./uninstall.sh                                  # 卸载 $DSH_HOME 或 ~/.dsh 里的插件

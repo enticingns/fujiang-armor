@@ -1,10 +1,10 @@
 // scripts/lib/compat.js
-// 富江破甲宿主兼容层（DSH 0.2.x / 0.2.2-rc.1 及以后）。
+// 富江破甲宿主兼容层（DSH 0.2.x / 0.2.2-rc.1 ~ rc.5 及以后）。
 //
 // 与旧版 patcher.js 的区别：
 //   1. 不再改写宿主 node_modules（0.1.6/0.1.7 的 PERSONA_SECTION_NAMES 过滤在 0.2.x
 //      已不存在，旧补丁在 0.2.x 上永远匹配不到；仅在检测到旧宿主时才保留该分支）。
-//   2. 0.2.2-rc.1 起循环不再注册 {{cwd}} 变量，profile/home 里任何含 {{cwd}} 的
+//   2. 0.2.2-rc.1 起（rc.5 同）循环不再注册 {{cwd}} 变量，profile/home 里任何含 {{cwd}} 的
 //      personaSuffix 都会让提示词组装抛错 —— 这里主动清掉该子句。
 //   3. profile 补丁对已有行的 config 是整体替换：这里改成「定点插入」
 //      includeHarnessIdentity: false，不再整段覆盖用户配置。

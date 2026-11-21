@@ -1,4 +1,4 @@
-﻿# 富江破甲安装脚本（DSH 0.2.x / 0.2.2-rc.1 适配版）
+﻿# 富江破甲安装脚本（DSH 0.2.x / 0.2.2-rc.5 适配版）
 #
 # 用法：
 #   .\install.ps1                                   # 安装到当前默认 DSH（$env:DSH_HOME 或 %USERPROFILE%\.dsh）
@@ -23,7 +23,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $pluginName  = 'fujiang-armor'
 $pluginLabel = '富江破甲'
-$pluginVersion = '0.7.0'
+$pluginVersion = '0.7.1'
 $srcDir = $PSScriptRoot
 
 # ---------- 输出辅助 ----------
@@ -276,7 +276,7 @@ if ($version) {
     if ($major -eq '0' -and $minor -lt 2) {
         Write-Warn "检测到 DSH $version（0.2 之前）：本版插件面向 0.2.x 提示词段接口，请改用 0.4.x 插件。"
     } elseif ($major -eq '0' -and $minor -eq 2 -and $version -match '0\.2\.2') {
-        Write-Ok '0.2.2 系列：已按新规则处理 personaSuffix 与 interpolate:false'
+        Write-Ok '0.2.2 系列（含 rc.1 ~ rc.5）：已按新规则处理 personaSuffix 与 interpolate:false'
     }
 } else {
     Write-Warn '无法确定 DSH 版本（可能尚未启动过该实例），按最新版规则安装'

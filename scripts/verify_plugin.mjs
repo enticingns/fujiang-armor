@@ -76,6 +76,14 @@ test("server, manifest, and client use the same plugin identity", () => {
   assert.deepEqual(pkg.dsh.client.inject, ["@deepseek-ai/dsh-client-ui-conversation"]);
 });
 
+test("manifest declares the verified DSH compatibility range", () => {
+  // 0.7.1 起按 rc.5 的规则显式声明兼容范围：engines.dsh 单独决定结论，
+  // 宿主用 semver.satisfies(..., { includePrerelease: true }) 求值。
+  // 上界写成 <0.3.0-0，连 0.3.0 的预发布版一起排除。
+  assert.equal(pkg.engines.dsh, ">=0.2.1 <0.3.0-0");
+  assert.equal(pkg.dsh.manifestVersion, 1);
+});
+
 test("manifest exports the display resources DSH 0.2.2 reads", () => {
   assert.equal(pkg.exports["./icon"], "./icon.svg");
   assert.equal(pkg.exports["./locale/*.json"], "./locale/*.json");

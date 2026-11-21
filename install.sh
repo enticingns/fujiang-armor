@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 富江破甲安装脚本（DSH 0.2.x / 0.2.2-rc.1 适配版）
+# 富江破甲安装脚本（DSH 0.2.x / 0.2.2-rc.5 适配版）
 #
 # 用法：
 #   ./install.sh                                        # 安装到 $DSH_HOME 或 ~/.dsh
@@ -11,7 +11,7 @@ set -euo pipefail
 
 PLUGIN_NAME="fujiang-armor"
 PLUGIN_LABEL="富江破甲"
-PLUGIN_VERSION="0.7.0"
+PLUGIN_VERSION="0.7.1"
 INJECTION_MODE="${INJECTION_MODE:-user}"
 case "$INJECTION_MODE" in
   user|legacy) ;;

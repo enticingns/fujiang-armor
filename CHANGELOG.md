@@ -1,5 +1,17 @@
 # 更新说明
 
+## 0.7.1 — 适配 DSH 0.2.2-rc.5
+
+- **兼容性声明**：新增 `engines.dsh: ">=0.2.1 <0.3.0-0"`。rc.5 起宿主按 `engines.dsh` 单独判定插件兼容性（`semver.satisfies(version, range, { includePrerelease: true })`，见 `dsh-app-boot` 的 plugin-compatibility），声明后插件页/启动器给出确定结论，不再依赖「未声明 = 默认放行」。上界 `<0.3.0-0` 同时挡掉 `0.3.0` 的预发布版。
+- **清单格式**：新增 `dsh.manifestVersion: 1`（rc.5 的包清单格式标识）。
+- **实测（0.2.2-rc.5，隔离 DSH_HOME + 本地桩模型）**：
+  - legacy 模式：system 段 11011 字符，`You are 年前` ×2 + 镜像段 ×2；
+  - user 模式：system 段无内核，内核前置到最后一条 user 消息（×1，幂等）；
+  - 工具 `fujiang_profile` 正常进入模型工具表；
+  - Web 启动图包含 `fujiang-armor/client.js`，combo bundle 下发 200。
+- **结论**：`0.2.2-rc.1` → `rc.5` 之间本插件依赖的宿主接口（`systemPrompt.section({interpolate:false})`、`agent/pre-step`、`sessionProjections.register()`、`tools.register()`、客户端 `ctx.slots` + `useProjection`）无破坏性变更，注入逻辑与提示词文本均未改动。
+- 版本号同步：`package.json`、`index.js`（`pluginVersion` / `kernelVersion` / `targetHost`）、`install.ps1`、`install.sh`、安装/卸载脚本头部。
+
 ## 0.7.0 — 两个注入模式 + 提示词文本修正
 
 - **两个对外注入模式**（`injectionMode`）：

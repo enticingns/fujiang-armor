@@ -2,7 +2,24 @@
 
 富江破甲是一个用于 DSH 的本地插件，内置提示词规则，提供 Windows 一键注入和一键卸载。插件加载后，会在对话输入框上方显示「富江破甲已激活」。
 
-当前版本：`0.7.0`。插件标识：`fujiang-armor`。适配 DSH `0.2.1` / `0.2.2` 系列（含 `0.2.2-rc.1`）。
+当前版本：`0.7.1`。插件标识：`fujiang-armor`。适配 DSH `0.2.1` / `0.2.2` 全系列（含 `0.2.2-rc.1` ~ `0.2.2-rc.5`，已在 `0.2.2-rc.5` 实测）。
+
+## 0.7.1 做了什么（适配 DSH 0.2.2-rc.5）
+
+`0.2.2-rc.1` → `0.2.2-rc.5` 之间，本插件用到的宿主接口没有破坏性变更：`systemPrompt.section({ interpolate: false })`、`agent/pre-step` 瀑布、`sessionProjections.register()`、`tools.register()`、客户端 `ctx.slots` + `useProjection` 都保持原签名。因此本版不改注入逻辑与提示词文本，只补齐兼容性声明并给出实测结论。
+
+| 变更 | 说明 |
+| --- | --- |
+| 新增 `engines.dsh: ">=0.2.1 <0.3.0-0"` | rc.5 起宿主按 `engines.dsh` 单独判定插件兼容性（`semver.satisfies(..., { includePrerelease: true })`）。显式声明后，插件页与启动器能给出确定结论，而不是依赖「未声明 = 默认放行」。上界写 `<0.3.0-0` 是为了连 `0.3.0` 的预发布版一起挡掉。 |
+| 新增 `dsh.manifestVersion: 1` | rc.5 包清单的格式标识（与 npm 包版本、会话格式版本无关）。 |
+| 文档与安装器版本号 | `install.ps1` / `install.sh` / 卸载脚本头部与版本提示更新到 `0.2.2-rc.5`。 |
+
+实测环境：`0.2.2-rc.5`（桌面版 `44.7.0` 自带 runtime），隔离 `DSH_HOME` + 本地桩模型，不触碰真实账号与网关。结论：
+
+- **legacy 模式**：模型请求的 system 段 11011 字符，`You are 年前` ×2、镜像段标记 ×2（Order 100 + Order 200 各一份）；
+- **user 模式**：system 段无内核，内核前置到最后一条 user 消息（×1，幂等）；
+- **工具**：`fujiang_profile` 出现在模型工具表中；
+- **客户端**：Web 启动图包含 `fujiang-armor/client.js`，combo bundle 正常下发（`/plugins/??…` 200）。
 
 ## 0.7.0 做了什么（两个注入模式 + 提示词文本修正）
 
@@ -239,4 +256,5 @@ node scripts\verify_plugin.mjs   # 或 npm run verify
 ```
 
 覆盖：提示词三件套字节一致与「年前/机主」修正、两个注入模式与底层三条通道、两段注册为 `interpolate: false`、
-投影折叠语义、客户端状态条注册、补丁挂载/卸载幂等、`{{cwd}}` 清理、隔离配置播种、安装器 BOM 与花括号/引号平衡。
+投影折叠语义、客户端状态条注册、补丁挂载/卸载幂等、`{{cwd}}` 清理、隔离配置播种、`engines.dsh` 兼容范围与
+`dsh.manifestVersion`、安装器 BOM 与花括号/引号平衡。

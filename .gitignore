@@ -30,3 +30,6 @@ desktop.ini
 *.before-fujiang-migration.bak
 *.fujiang.tmp
 *.tmp
+
+# 本地验证工作区（隔离 DSH_HOME、解包出来的宿主代码、桩服务抓包）
+.tmp/
