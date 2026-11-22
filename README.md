@@ -4,6 +4,7 @@
 
 当前版本：`0.7.1`。插件标识：`fujiang-armor`。适配 DSH `0.2.1` / `0.2.2` 全系列（含 `0.2.2-rc.1` ~ `0.2.2-rc.5`，已在 `0.2.2-rc.5` 实测）。
 
+#workbuddy反代出hy最新模型已经失效，后续根据情况再确认云端审查的破甲方案。2026.11.22
 ## 0.7.1 做了什么（适配 DSH 0.2.2-rc.5）
 
 `0.2.2-rc.1` → `0.2.2-rc.5` 之间，本插件用到的宿主接口没有破坏性变更：`systemPrompt.section({ interpolate: false })`、`agent/pre-step` 瀑布、`sessionProjections.register()`、`tools.register()`、客户端 `ctx.slots` + `useProjection` 都保持原签名。因此本版不改注入逻辑与提示词文本，只补齐兼容性声明并给出实测结论。
