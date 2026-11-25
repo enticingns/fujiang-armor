@@ -1,5 +1,17 @@
 # 更新说明
 
+## 0.9.2 — 回退 client.js 到 0.8.0 已知可用实现，恢复状态栏
+
+0.9.1 声称修好了状态栏，但实际没恢复。根因：`client.js` 声明了 `inject = ["slots", "remote"]`，而客户端 runner 对声明了却取不到的服务会让插件停在 `waitingFor`（pending），永远不激活，slot 根本不注册。
+
+修复：**client.js 逐字节回退到 0.8.0 的实现**（blob `2eac517`）——`inject = ["slots"]`，只注册纯徽章，不含开关按钮、`ctx.remote`、`useCallback`。blob hash 已核对一致。
+
+代价：输入框状态栏上的 `关闭/打开`、`user|legacy|both` 按钮不再显示。运行时开关功能完全保留，改用：
+- 斜杠命令 `/fujiang on|off [soft|hard|new]|mode user|legacy|both|status`
+- 工具 `fujiang_switch`
+
+徽章本身（绿色状态栏 + 拒答实时反馈）恢复。
+
 ## 0.9.1 — 修复 0.9.0 状态栏消失
 
 - **根因**：0.9.0 的 `client.js` 在 `apply()` 里直接读 `ctx.remote.commands`，但插件的 client `inject` 只声明了 `slots`，没声明 `remote`。客户端 sandbox 的 guard 对未声明服务的访问会让 `apply()` 抛错，slot 注册失败，绿色状态栏整条消失。
