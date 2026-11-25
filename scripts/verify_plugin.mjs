@@ -1,10 +1,20 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { runInNewContext } from "node:vm";
 import { test } from "node:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import * as plugin from "../index.js";
+
+// 运行时开关会把状态写进 $DSH_HOME，测试必须隔离，否则会读到/写到你真实的开关状态。
+function useTempHome() {
+  const home = mkdtempSync(join(tmpdir(), "fj-test-"));
+  process.env.DSH_HOME = home;
+  return home;
+}
+useTempHome();
 
 const root = new URL("../", import.meta.url);
 const load = (file) => readFileSync(new URL(file, root));
@@ -29,7 +39,8 @@ test("prompt assets preserve the supplied bytes", () => {
   }
 });
 
-test("two injection modes map to the intended channels", () => {
+test("two injection modes map to the intended channels", async () => {
+  useTempHome();
   function probe(config) {
     const sections = [];
     const handlers = new Map();
@@ -52,14 +63,18 @@ test("two injection modes map to the intended channels", () => {
 
   const legacyMode = probe({ injectionMode: "legacy" });
   assert.equal(legacyMode.sections.length, 2, "legacy 模式必须注册 Order 100 + Order 200 两段");
-  assert.equal(legacyMode.handlers.has("agent/pre-step"), false, "legacy 模式不应注册 pre-step");
   assert.equal(legacyMode.profile.injectionMode, "legacy");
   assert.equal(legacyMode.profile.injectionChannel, "system");
+  // 0.9.0 起 pre-step 常驻（负责硬关的作废声明），legacy 模式下它不追加内核
+  const legacyDecision = await legacyMode.handlers.get("agent/pre-step")(
+    { agent: {} },
+    async () => ({ kind: "enter", messages: [] }),
+  );
+  assert.equal(legacyDecision.messages.length, 0, "legacy 模式不应追加 user 注入消息");
 
   // 老 bundle patch 残留 injectionChannel: user 时，显式 mode 必须赢。
   const overridden = probe({ injectionMode: "legacy", injectionChannel: "user" });
   assert.equal(overridden.sections.length, 2);
-  assert.equal(overridden.handlers.has("agent/pre-step"), false);
   assert.equal(overridden.profile.injectionMode, "legacy");
 
   // 未给 mode 时仍兼容旧配置与默认 user 模式。
@@ -68,6 +83,7 @@ test("two injection modes map to the intended channels", () => {
 });
 
 test("user 模式追加带来源的注入消息，且按可见历史幂等", async () => {
+  useTempHome();
   const handlers = new Map();
   plugin.apply({
     effect: (fn) => fn(),
@@ -135,6 +151,103 @@ test("user 模式追加带来源的注入消息，且按可见历史幂等", asy
   assert.equal(await preStep({ agent: { session: emptySession }, turn: 1, step: 1 }, async () => already), already);
 });
 
+test("运行时开关：命令与工具同源、状态落盘、system 段随模式增删", () => {
+  useTempHome();
+  const commands = [];
+  const tools = [];
+  let sections = 0;
+  plugin.apply({
+    effect: (fn) => fn(),
+    on: () => () => {},
+    systemPrompt: { section: () => { sections += 1; return () => { sections -= 1; }; } },
+    tools: { register: (tool) => tools.push(tool) },
+    get: (name) => (name === "commands"
+      ? { register: (definition) => { commands.push(definition); return () => {}; } }
+      : undefined),
+  }, { injectionMode: "legacy" });
+
+  assert.equal(sections, 2, "legacy 模式应挂 Order 100 + 200");
+  assert.equal(commands.length, 1, "/fujiang 命令未注册");
+  const command = commands[0];
+  const call = (rawInput, agent = { session: {} }) => JSON.parse(command.handler({ rawInput, agent }).text);
+
+  const status = call("");
+  assert.equal(status.ok, true);
+  assert.equal(status.enabled, true);
+  assert.equal(status.mode, "legacy");
+
+  const off = call(" off hard");
+  assert.equal(off.ok, true);
+  assert.equal(off.enabled, false);
+  assert.equal(off.off, "hard");
+  assert.equal(sections, 0, "关闭后 system 段应摘除");
+
+  const saved = JSON.parse(readFileSync(join(process.env.DSH_HOME, "fujiang-armor.state.json"), "utf8"));
+  assert.equal(saved.enabled, false);
+  assert.equal(saved.mode, "legacy");
+
+  const switchTool = tools.find((tool) => tool.name === "fujiang_switch");
+  assert.ok(switchTool, "fujiang_switch 未注册");
+  assert.equal(switchTool.execute({ action: "on" }).ok, true);
+  assert.equal(sections, 2, "重新打开后 system 段回来");
+
+  const mode = switchTool.execute({ action: "mode", value: "user" });
+  assert.equal(mode.ok, true);
+  assert.equal(mode.mode, "user");
+  assert.equal(mode.channel, "user");
+  assert.equal(sections, 0, "user 模式不挂 system 段");
+
+  // 工具没有会话上下文：hard-off 必须拒绝，避免写不进作废声明却把开关关了
+  assert.equal(switchTool.execute({ action: "off", value: "hard" }).ok, false);
+  assert.equal(switchTool.execute({ action: "nope" }).ok, false);
+  assert.equal(switchTool.execute({ action: "mode", value: "bogus" }).ok, false);
+  // 工具状态查询与命令同源
+  const viaTool = switchTool.execute({ action: "status" });
+  assert.equal(viaTool.enabled, true);
+  assert.equal(viaTool.mode, "user");
+});
+
+test("关闭后不再注入内核；硬关只追加一次作废声明", async () => {
+  useTempHome();
+  const handlers = new Map();
+  const commands = [];
+  plugin.apply({
+    effect: (fn) => fn(),
+    on: (event, handler) => { handlers.set(event, handler); return () => {}; },
+    systemPrompt: { section: () => () => {} },
+    tools: { register: () => {} },
+    get: (name) => (name === "commands"
+      ? { register: (definition) => { commands.push(definition); return () => {}; } }
+      : undefined),
+  }, { injectionMode: "user" });
+
+  const preStep = handlers.get("agent/pre-step");
+  const session = { seq: 0, surface: { nodes: [] }, eventAt: () => undefined };
+  const agent = { session };
+  const decide = () => ({ kind: "enter", messages: [] });
+
+  const first = await preStep({ agent }, async () => decide());
+  assert.equal(first.messages.length, 1, "默认应注入内核");
+  assert.ok(first.messages[0].content[0].text.includes("You are 年前"));
+
+  const off = JSON.parse(commands[0].handler({ rawInput: " off hard", agent }).text);
+  assert.equal(off.enabled, false);
+
+  const second = await preStep({ agent }, async () => decide());
+  assert.equal(second.messages.length, 1, "关闭后应只追加作废声明");
+  const text = second.messages[0].content[0].text;
+  assert.ok(text.includes("富江破甲已关闭"));
+  assert.ok(!text.includes("You are 年前"), "作废声明不应再带内核");
+
+  const third = await preStep({ agent }, async () => decide());
+  assert.equal(third.messages.length, 0, "作废声明只写一次");
+
+  // 重新打开后恢复注入
+  JSON.parse(commands[0].handler({ rawInput: " on", agent }).text);
+  const fourth = await preStep({ agent }, async () => decide());
+  assert.equal(fourth.messages.length, 1);
+  assert.ok(fourth.messages[0].content[0].text.includes("You are 年前"));
+});
 test("server, manifest, and client use the same plugin identity", () => {
   assert.equal(plugin.name, "fujiang-armor");
   assert.equal(pkg.name, plugin.name);
@@ -166,6 +279,7 @@ test("manifest exports the display resources DSH 0.2.2 reads", () => {
 });
 
 test("both prompt sections register as literal (interpolate:false) sections", () => {
+  useTempHome();
   const sections = [];
   const tools = [];
   const projections = [];
@@ -205,6 +319,7 @@ test("both prompt sections register as literal (interpolate:false) sections", ()
 });
 
 test("armor projection folds events and keeps the same reference otherwise", () => {
+  useTempHome();
   const sections = [];
   const projections = [];
   plugin.apply({
@@ -212,7 +327,9 @@ test("armor projection folds events and keeps the same reference otherwise", () 
     on: () => () => {},
     systemPrompt: { section: (section) => sections.push(section) },
     tools: { register: () => {} },
-    get: () => ({ register: (definition) => projections.push(definition) }),
+    get: (name) => (name === "sessionProjections"
+      ? { register: (definition) => projections.push(definition) }
+      : undefined),
   }, {});
 
   const definition = projections[0];
@@ -249,6 +366,7 @@ test("client registers the activation badge above the conversation input", () =>
     useRef: (current) => ({ current }),
     useState: (value) => [value, () => {}],
     useEffect: () => {},
+    useCallback: (fn) => fn,
     createElement: (tag, props, ...children) => ({ tag, props, children }),
   };
   runInNewContext(load("client.js").toString("utf8"), {

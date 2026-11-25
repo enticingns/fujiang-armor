@@ -5,8 +5,13 @@
 //   0.7.x = 把内核前缀拼到最后一条 user 消息上（改写用户原文）
 //   0.8.0 = 追加一条带 source 的 user 消息（<system-reminder> 包裹），用户原文一字不改
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { apply } from "../index.js";
+
+// 运行时开关会读写 $DSH_HOME 下的状态文件，测试必须隔离。
+process.env.DSH_HOME = mkdtempSync(join(tmpdir(), "fj-channel-"));
 
 const ARMOR = readFileSync(new URL("../prompts/fujiang.md", import.meta.url), "utf8").trim();
 const HEAD = ARMOR.slice(0, 32);
@@ -122,12 +127,14 @@ async function main() {
     assert.equal(out.messages[1].source.kind, ARMOR_KIND);
   }
 
-  // 5) system 通道：注册两段，不注册 pre-step
+  // 5) system 通道：注册两段；pre-step 常驻但不追加内核
   {
     const { ctx, state } = mockCtx();
     apply(ctx, { injectionChannel: "system" });
     assert.equal(state.sections.length, 2, "system 通道应注册两段");
-    assert.equal(state.handlers.has("agent/pre-step"), false, "system 通道不应注册 pre-step");
+    const decision = decisionWith([{ id: "b", role: "user", content: "你好", source: { kind: "user" } }]);
+    const out = await state.handlers.get("agent/pre-step")({ agent: {} }, async () => decision);
+    assert.equal(out, decision, "legacy/system 模式不应追加 user 注入消息");
   }
 
   // 6) both：两路都在
@@ -188,7 +195,7 @@ async function main() {
     const { ctx, state } = mockCtx();
     apply(ctx, { injectionMode: "legacy" });
     assert.equal(state.sections.length, 2);
-    assert.equal(state.handlers.has("agent/pre-step"), false);
+    assert.equal(state.handlers.has("agent/pre-step"), true, "pre-step 常驻（硬关用）");
     const profile = state.tools.find((t) => t.name === "fujiang_profile").execute();
     assert.equal(profile.injectionMode, "legacy");
     assert.equal(profile.injectionChannel, "system");
@@ -199,7 +206,6 @@ async function main() {
     const { ctx, state } = mockCtx();
     apply(ctx, { injectionMode: "legacy", injectionChannel: "user" });
     assert.equal(state.sections.length, 2);
-    assert.equal(state.handlers.has("agent/pre-step"), false);
   }
 
   console.log("ok: 12 组注入通道/模式自检全部通过");
