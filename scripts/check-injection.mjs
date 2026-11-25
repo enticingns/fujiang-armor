@@ -20,13 +20,16 @@ import zlib from "node:zlib";
 const MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
 const LOG_NAME = "session.v4.jsonl.zstd";
 
-// 判定标记：取内置提示词的首句与黑名单标题。
+// 判定标记：取内核首句与两处独有的小节标题。
 // 0.7.0 起提示词内核自称「年前」（激活词同步），旧会话日志仍可能是「富江」，两者都认。
-const KERNEL_MARKERS = ["## Blacklist"];
+// 0.8.0 起内核重写，旧标记「## Blacklist」已不存在，改用 0.8.0 独有标题。
+const KERNEL_MARKERS = ["## 5. 拒绝对抗", "## 11. 稳定性锚点"];
+const LEGACY_KERNEL_MARKERS = ["## Blacklist"];
 const KERNEL_HEAD_RE = /You are (?:年前|富江)/g;
 const CURRENT_KERNEL_HEAD = "You are 年前";
 const LEGACY_KERNEL_HEAD = "You are 富江";
 const TOOL_NAME = "fujiang_profile";
+const ARMOR_SOURCE_KIND = "fujiang-armor";
 
 function parseArgs(argv) {
   const out = { home: null, session: "latest", list: false, json: false };
@@ -107,16 +110,41 @@ function textOfMessage(message) {
     .join("\n");
 }
 
+// DSH 0.2.2-rc.x 的事件形状不一致：
+//   system/message、assistant/message、tool/result → data.message.content
+//   user/message                                   → data.content（扁平）
+// 0.7.x 的自检只认前者，切到 user 通道后会误报「内核未注入」。
+function textOfEventData(data) {
+  if (!data) return "";
+  if (data.message) return textOfMessage(data.message);
+  if (typeof data.content === "string") return data.content;
+  if (Array.isArray(data.content)) {
+    return data.content
+      .filter((block) => block && block.type === "text")
+      .map((block) => block.text)
+      .join("\n");
+  }
+  return "";
+}
+
+function sourceKindOf(data) {
+  return data && data.source && typeof data.source.kind === "string" ? data.source.kind : null;
+}
+
 function inspect(entry) {
   const events = readSessionLog(entry.file);
   const header = events.find((e) => e.type === "session");
   const systemEvents = events.filter((e) => e.type === "system/message");
-  const systemText = systemEvents.map((e) => textOfMessage(e?.data?.message)).join("\n\n");
-  // 0.6.0 起内核也可以走 user 通道（前置到最后一条 user 消息），
-  // 因此判定要同时看 system 与 user 两侧，不能只看系统提示词。
+  // 只取最后一条：热重载（换注入模式）后日志里会同时留着旧、新两条 system/message，
+  // 拼起来看会把「旧模式留下的内核」当成当前生效的通道。
+  const latestSystem = systemEvents[systemEvents.length - 1];
+  const systemText = latestSystem ? textOfEventData(latestSystem?.data) : "";
+  // 0.6.0 起内核也可以走 user 通道，因此判定要同时看 system 与 user 两侧。
+  // 0.8.0 起 user 通道改为追加一条带 source 的注入消息（不改写用户原文）。
   const userEvents = events.filter((e) => e.type === "user/message");
-  const userText = userEvents.map((e) => textOfMessage(e?.data?.message)).join("\n\n");
+  const userText = userEvents.map((e) => textOfEventData(e?.data)).join("\n\n");
   const combinedText = `${systemText}\n\n${userText}`;
+  const armorMessages = userEvents.filter((e) => sourceKindOf(e?.data) === ARMOR_SOURCE_KIND).length;
   const requestHeader = events.find((e) => e.type === "request/header");
   const tools = Array.isArray(requestHeader?.data?.header?.tools)
     ? requestHeader.data.header.tools.map((tool) => tool?.name).filter(Boolean)
@@ -129,15 +157,28 @@ function inspect(entry) {
   const allHeads = systemHeads.concat(userHeads);
   const currentHeads = allHeads.filter((h) => h === CURRENT_KERNEL_HEAD);
   const legacyHeads = allHeads.filter((h) => h === LEGACY_KERNEL_HEAD);
+  // 0.8.0 内核与 0.7.x 内核的小节标题不同，两套标记都算命中。
+  const markersOf = (text) => (KERNEL_MARKERS.every((marker) => text.includes(marker))
+    ? KERNEL_MARKERS
+    : LEGACY_KERNEL_MARKERS.every((marker) => text.includes(marker)) ? LEGACY_KERNEL_MARKERS : null);
+  const systemMarkers = markersOf(systemText);
+  const userMarkers = markersOf(userText);
   const kernelHits = [
     { marker: CURRENT_KERNEL_HEAD, count: currentHeads.length },
     { marker: LEGACY_KERNEL_HEAD, count: legacyHeads.length },
     ...KERNEL_MARKERS.map((marker) => ({ marker, count: combinedText.split(marker).length - 1 })),
+    ...LEGACY_KERNEL_MARKERS.map((marker) => ({ marker, count: combinedText.split(marker).length - 1 })),
   ];
-  const hasKernel = (text, heads) => heads.length > 0 && KERNEL_MARKERS.every((marker) => text.includes(marker));
-  const inSystem = hasKernel(systemText, systemHeads);
-  const inUser = hasKernel(userText, userHeads);
-  const channel = inSystem && inUser ? "both" : inSystem ? "system" : inUser ? "user" : "none";
+  const hasKernel = (heads, markers) => heads.length > 0 && markers !== null;
+  const inSystem = hasKernel(systemHeads, systemMarkers);
+  const inUser = hasKernel(userHeads, userMarkers);
+  const channel = inSystem && inUser
+    ? "both"
+    : inSystem
+      ? "system"
+      : inUser
+        ? armorMessages > 0 ? "user(注入消息)" : "user(前缀改写)"
+        : "none";
   const headCount = currentHeads.length + legacyHeads.length;
 
   return {
@@ -156,6 +197,7 @@ function inspect(entry) {
     kernelHits,
     kernelInjected: (inSystem || inUser) && headCount > 0,
     dualLayer: headCount >= 2,
+    armorMessages,
     kernelVariant: currentHeads.length ? "年前" : legacyHeads.length ? "富江(旧版提示词)" : null,
     channel,
     toolRegistered: tools.includes(TOOL_NAME),
@@ -175,9 +217,16 @@ function verdictOf(report) {
     lines.push(report.kernelInjected
       ? `  [OK] 内核已注入（通道：${report.channel}，内核：${report.kernelVariant}）：${report.kernelHits.filter((h) => h.count > 0).map((h) => `${h.marker}×${h.count}`).join("，")}`
       : "  [X]  内核未注入：system 与 user 两侧都找不到年前/富江内核文本");
-    lines.push(report.dualLayer
-      ? "  [OK] 双段注入生效（Order 100 内核 + Order 200 镜像各一份）"
-      : "  [i]  单段注入（DUAL_LAYER_INJECTION=false 或只命中一段）");
+    lines.push(report.channel.startsWith("user")
+      ? report.armorMessages > 0
+        ? `  [OK] user 通道：追加了 ${report.armorMessages} 条注入消息（source.kind=fujiang-armor，用户原文未被改写）`
+        : "  [!]  user 通道：内核落在用户消息前缀上（0.7.x 行为，会污染用户原文）"
+      : report.dualLayer
+        ? "  [OK] 双段注入生效（Order 100 内核 + Order 200 镜像各一份）"
+        : "  [i]  单段注入（DUAL_LAYER_INJECTION=false 或只命中一段）");
+    lines.push(report.channel === "system"
+      ? "  [!]  system 通道：中转站/网关若重写 system 消息，整段内核会被丢弃"
+      : "  [i]  system 通道未命中属正常（user 模式不注册 system 段）");
     lines.push(report.toolRegistered
       ? `  [OK] 工具 ${TOOL_NAME} 已注册（模型可用）`
       : `  [!]  工具列表里没有 ${TOOL_NAME}（插件可能只注入了提示词段）`);
@@ -221,6 +270,7 @@ if (args.list) {
       model: report.model ?? "-",
       system: report.systemMessages,
       kernel: report.kernelInjected ? "是" : "否",
+      channel: report.channel,
       dual: report.dualLayer ? "是" : "否",
       tool: report.toolRegistered ? "是" : "否",
     };
@@ -228,10 +278,10 @@ if (args.list) {
   if (args.json) console.log(JSON.stringify(rows, null, 2));
   else {
     console.log(`\n数据目录：${home}\n`);
-    console.log("会话                  更新时间            模型                 system 内核 双段 工具");
+    console.log("会话                  更新时间            模型                 system 内核 通道            工具");
     for (const row of rows) {
       console.log(
-        `${row.session.padEnd(21)} ${row.updated.padEnd(19)} ${String(row.model).padEnd(20)} ${String(row.system).padEnd(6)} ${row.kernel.padEnd(4)} ${row.dual.padEnd(4)} ${row.tool}`,
+        `${row.session.padEnd(21)} ${row.updated.padEnd(19)} ${String(row.model).padEnd(20)} ${String(row.system).padEnd(6)} ${row.kernel.padEnd(4)} ${row.channel.padEnd(15)} ${row.tool}`,
       );
     }
     console.log("");

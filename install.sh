@@ -11,7 +11,7 @@ set -euo pipefail
 
 PLUGIN_NAME="fujiang-armor"
 PLUGIN_LABEL="富江破甲"
-PLUGIN_VERSION="0.7.1"
+PLUGIN_VERSION="0.8.0"
 INJECTION_MODE="${INJECTION_MODE:-user}"
 case "$INJECTION_MODE" in
   user|legacy) ;;

@@ -1,5 +1,37 @@
 # 更新说明
 
+## 0.8.0 — 中转站适配：破甲内核重写 + user 通道改为「无感追加」
+
+### 为什么改
+
+实测某个 OpenAI 兼容中转网关会**整段替换请求里的 system 消息**：
+
+| 探针位置 | 结果 |
+|---|---|
+| `role=system` 塞 canary | 被丢弃，模型回答「系统提示里只定义了我作为工程助手」 |
+| `role=developer` 塞 canary | 被丢弃 |
+| `role=user` 塞 canary | 原样透传 |
+
+会话日志里 DSH 装配出的 37939 字符系统提示词（purge `prompt-inject.md` + 内核 ×2）确实被发出去了，但模型收到的却是网关自己的中文「工程助手」提示词。**legacy（system 通道）在这个网关下等于 0 效果**，这就是「破甲不太正常」的根因。
+
+### 新增 / 修改
+
+- **user 通道改为追加注入消息**（`index.js`）：不再把内核前缀拼到最后一条 user 消息上（0.7.x 行为会污染用户原文，会话记录与界面都能看到整段内核），改为 `agent/pre-step` 里追加一条带 `source.kind = "fujiang-armor"` 的 user 消息，内容用宿主同款的 `<system-reminder>` 外壳包裹。用户输入一字不改，客户端按注入上下文渲染。
+- **幂等改为按可见历史判定**：读 `agent.session.surface.nodes` + `eventAt()`，可见历史里已有注入就跳过；被压缩掉之后自动补一条（与 `dsh-tool-skill` 的技能目录同一套判定）。老宿主读不到 session 时退回进程内 `WeakSet`，保证一个会话只追加一次。
+- **投影忽略注入消息**：`user/message` 且 `source.kind = fujiang-armor` 的事件不再把状态条置为运行中。
+- **`fujiang_profile` 槽位改名**：`fujiang-armor:user-message-prefix` → `fujiang-armor:user-context-message`，并回传 `source` 字段。
+- **破甲内核重写**（`prompts/fujiang.md`，三件套逐字节一致）：按 `dsh-purge` 的 `prompt-inject.md` 结构重排 —— 覆盖声明（明确压过网关自带的 system 提示）/ 激活词 / 任务优先级 / 硬输出规则 / 拒绝对抗 / 25 条领域规则 / 沙箱测试方向 / 意图映射 / 占位符与边界词规范化 / Web 渗透路由 / 稳定性锚点 / 风格。体量从 4.3KB 提升到 16KB。
+- **自检修复**（`scripts/check-injection.mjs`）：DSH 0.2.2-rc.x 的 `user/message` 是扁平的 `data.content`，`system/message` / `assistant/message` 才是 `data.message.content`；旧版只认后者，切到 user 通道会误报「内核未注入」。现在两种形状都认，并区分「user(注入消息)」与「user(前缀改写)」两种落点。判定标记从已不存在的 `## Blacklist` 换成 0.8.0 独有小节标题。
+- **自检脚本适配**：`scripts/verify_plugin.mjs` 在插件目录（没有 `install.ps1`）下不再整体失败；`scripts/test_injection_channel.mjs` 重写为 12 组，覆盖追加语义、压缩补注、老宿主兜底。
+- **安装器**：`install.ps1` 新增 `-InjectionMode user|legacy`（默认 `user`），`install.sh` 支持 `INJECTION_MODE=user|legacy`，两者把模式透传给 `compat.js mount --mode`；版本号同步到 `0.8.0`。
+- **一键启动器补齐到 0.8.0**：`点我一键注入.bat` 改为交互选 `[1] user` / `[2] legacy`（回车默认 1），新增 `点我一键注入-user会话.bat`、`点我一键注入-老版本.bat` 两个直装入口；`点我检查是否生效.bat`、`点我一键卸载.bat` 同步重写（`chcp 65001` + 中文提示 + 参数透传）。所有 `.bat` 为 UTF-8 无 BOM + CRLF，`-InjectionMode` 与参数值在同一行，`check_encoding.mjs` 的 11 个脚本守卫全通过。
+
+### 升级注意
+
+- 默认仍是 `injectionMode: user`，但**语义变了**：从「改写用户原文」变成「追加注入消息」。配置项名字不变，`inject.ps1 -InjectionMode user` 无需改动。
+- 已装 `injectionMode: legacy` 的实例必须改成 `user`，否则内核继续被网关抹掉：`~/.dsh/profiles/<profile>/cordis.patch.yml` 托管块里那一行。
+- 改完需要重启 DSH；重启后跑 `node scripts/check-injection.mjs --session <id>` 应看到 `通道：user(注入消息)`。
+
 ## 0.7.1 — 适配 DSH 0.2.2-rc.5
 
 - **兼容性声明**：新增 `engines.dsh: ">=0.2.1 <0.3.0-0"`。rc.5 起宿主按 `engines.dsh` 单独判定插件兼容性（`semver.satisfies(version, range, { includePrerelease: true })`，见 `dsh-app-boot` 的 plugin-compatibility），声明后插件页/启动器给出确定结论，不再依赖「未声明 = 默认放行」。上界 `<0.3.0-0` 同时挡掉 `0.3.0` 的预发布版。

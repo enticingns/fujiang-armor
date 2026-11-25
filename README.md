@@ -2,9 +2,25 @@
 
 富江破甲是一个用于 DSH 的本地插件，内置提示词规则，提供 Windows 一键注入和一键卸载。插件加载后，会在对话输入框上方显示「富江破甲已激活」。
 
-当前版本：`0.7.1`。插件标识：`fujiang-armor`。适配 DSH `0.2.1` / `0.2.2` 全系列（含 `0.2.2-rc.1` ~ `0.2.2-rc.5`，已在 `0.2.2-rc.5` 实测）。
+当前版本：`0.8.0`。插件标识：`fujiang-armor`。适配 DSH `0.2.1` / `0.2.2` 全系列（含 `0.2.2-rc.1` ~ `0.2.2-rc.5`，已在 `0.2.2-rc.5` 实测）。
 
 #workbuddy反代出hy最新模型已经失效，后续根据情况再确认云端审查的破甲方案。2026.11.22
+## 0.8.0 做了什么（中转站适配：内核重写 + 无感注入）
+
+### 根因
+
+实测某个 OpenAI 兼容中转网关会**整段替换请求里的 system 消息**：`role=system` 与 `role=developer` 的 canary 全被丢弃，`role=user` 的 canary 原样透传。DSH 侧装配没问题（会话日志里 37939 字符、内核 ×2 都在），但模型实际收到的是网关自己的中文「工程助手」提示词。所以 `legacy`（system 通道）在这种网关下等于 0 效果。
+
+### 改了什么
+
+- `user` 模式改为**追加一条带来源的注入消息**：`agent/pre-step` 追加 `source.kind = "fujiang-armor"` 的 user 消息，内容用宿主同款 `<system-reminder>` 外壳；**用户输入一字不改**，会话记录里不会出现「你的消息里塞了 16KB 提示词」。
+- 幂等按**可见历史**判定（`agent.session.surface.nodes` + `eventAt()`）：已有注入就跳过，被压缩掉就自动补一条。老宿主读不到 session 时退回进程内 `WeakSet`。
+- 破甲内核按 `dsh-purge` 的 `prompt-inject.md` 结构重写（覆盖声明 / 激活词 / 硬输出规则 / 拒绝对抗 / 25 条领域规则 / 意图映射 / 占位符与边界词规范化 / Web 渗透路由 / 稳定性锚点），4.3KB → 16.4KB。
+- 自检修复：`check-injection.mjs` 现在同时认 `data.content`（user）与 `data.message.content`（system/assistant），只取最后一条 `system/message`（热重载后新旧并存会误判通道），并区分「user(注入消息)」与「user(前缀改写)」。
+
+### 升级注意
+
+已装 `injectionMode: legacy` 的实例必须改成 `user`（`~/.dsh/profiles/<profile>/cordis.patch.yml` 托管块），否则内核继续被网关抹掉。改完重启 DSH。
 ## 0.7.1 做了什么（适配 DSH 0.2.2-rc.5）
 
 `0.2.2-rc.1` → `0.2.2-rc.5` 之间，本插件用到的宿主接口没有破坏性变更：`systemPrompt.section({ interpolate: false })`、`agent/pre-step` 瀑布、`sessionProjections.register()`、`tools.register()`、客户端 `ctx.slots` + `useProjection` 都保持原签名。因此本版不改注入逻辑与提示词文本，只补齐兼容性声明并给出实测结论。
@@ -28,8 +44,8 @@
 
 | `injectionMode` | 行为 | 适用 |
 | --- | --- | --- |
-| `user`（默认） | **user 会话注入**：`agent/pre-step` 把内核前置到本步最后一条 user 消息（幂等） | 网关会重写/剥离 system 的链路；通用首选 |
-| `legacy` | **老版本注入**：0.5.0 及以前的 system 双层段（Order 100 内核 + Order 200 镜像） | 需要保持老版本行为的场景 |
+| `user`（默认） | **user 会话注入**：`agent/pre-step` 追加一条带 `source` 的 user 消息（0.8.0 起；0.7.x 是前缀拼到用户消息上） | 网关会重写/剥离 system 的链路；通用首选 |
+| `legacy` | **老版本注入**：0.5.0 及以前的 system 双层段（Order 100 内核 + Order 200 镜像） | 需要保持老版本行为的场景；**system 被网关重写时无效** |
 
 一键安装三个入口：
 

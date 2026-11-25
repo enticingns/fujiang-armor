@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { runInNewContext } from "node:vm";
 import { test } from "node:test";
@@ -13,7 +13,8 @@ const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 // 自定义提示词内容后请同步更新本常量：
 // PowerShell: (Get-FileHash prompts\fujiang.md -Algorithm SHA256).Hash.ToLower()
 // 0.7.0 起提示词文本修正：富江→年前（含激活词）、爸爸→机主。
-const expectedHash = "e743e1b61503db90734780092089d51063ca0d06e149815c83b7c6bacf4af49d";
+// 0.8.0 起内核按 dsh-purge 的 prompt-inject 结构重写（覆盖声明/拒绝对抗/领域规则/路由）。
+const expectedHash = "0c720dfd7c7ac06259aba6dd193644af93cc65eda8e10f8dbfbde187bf7d35aa";
 const pkg = JSON.parse(load("package.json"));
 
 test("prompt assets preserve the supplied bytes", () => {
@@ -64,6 +65,74 @@ test("two injection modes map to the intended channels", () => {
   // 未给 mode 时仍兼容旧配置与默认 user 模式。
   assert.equal(probe({}).profile.injectionMode, "user");
   assert.equal(probe({ injectionChannel: "system" }).profile.injectionMode, "legacy");
+});
+
+test("user 模式追加带来源的注入消息，且按可见历史幂等", async () => {
+  const handlers = new Map();
+  plugin.apply({
+    effect: (fn) => fn(),
+    on: (event, handler) => { handlers.set(event, handler); return () => {}; },
+    systemPrompt: { section: () => {} },
+    tools: { register: () => {} },
+    get: () => ({ register: () => {} }),
+  }, { injectionMode: "user" });
+
+  const preStep = handlers.get("agent/pre-step");
+  assert.equal(typeof preStep, "function");
+
+  const userMessage = {
+    role: "user",
+    id: "u1",
+    content: [{ type: "text", text: "帮我看看这个" }],
+    source: { kind: "user" },
+  };
+  const decide = () => ({ kind: "enter", messages: [userMessage] });
+
+  // 首次：可见历史里没有注入 → 追加一条 fujiang-armor 来源的 user 消息
+  const emptySession = { seq: 0, surface: { nodes: [] }, eventAt: () => undefined };
+  const first = await preStep({ agent: { session: emptySession }, turn: 1, step: 1 }, async () => decide());
+  assert.equal(first.messages.length, 2);
+  const injected = first.messages[1];
+  assert.equal(injected.role, "user");
+  assert.equal(injected.source.kind, "fujiang-armor");
+  assert.equal(injected.source.form, "snapshot");
+  assert.ok(typeof injected.id === "string" && injected.id.length > 0);
+  const text = injected.content[0].text;
+  // 注入块用宿主的 system-reminder 外壳，不冒充用户输入
+  assert.ok(text.startsWith("<system-reminder>\n"));
+  assert.ok(text.trimEnd().endsWith("</system-reminder>"));
+  assert.ok(text.includes("You are 年前,"));
+  // 用户原文一个字都不改
+  assert.equal(first.messages[0].content[0].text, "帮我看看这个");
+
+  // 已可见：不再重复追加，返回同一个 decision 引用
+  const presentSession = {
+    seq: 1,
+    surface: { nodes: [0] },
+    eventAt: () => ({ seq: 0, type: "user/message", data: { source: { kind: "fujiang-armor" } } }),
+  };
+  const decision = decide();
+  assert.equal(await preStep({ agent: { session: presentSession }, turn: 2, step: 1 }, async () => decision), decision);
+
+  // 被压缩掉（事件不可见）：重新补一条
+  const prunedSession = {
+    seq: 1,
+    surface: { nodes: [] },
+    eventAt: () => ({ seq: 0, type: "user/message", data: { source: { kind: "fujiang-armor" } } }),
+  };
+  const again = await preStep({ agent: { session: prunedSession }, turn: 3, step: 1 }, async () => decide());
+  assert.equal(again.messages.length, 2);
+
+  // 老宿主读不到 session：进程内记忆保证同一会话只追加一次
+  const legacyAgent = { session: {} };
+  const unknownFirst = await preStep({ agent: legacyAgent, turn: 1, step: 1 }, async () => decide());
+  assert.equal(unknownFirst.messages.length, 2);
+  const unknownSecond = decide();
+  assert.equal(await preStep({ agent: legacyAgent, turn: 1, step: 2 }, async () => unknownSecond), unknownSecond);
+
+  // 本步批次里已经带了注入消息 → 跳过
+  const already = { kind: "enter", messages: [userMessage, { ...injected }] };
+  assert.equal(await preStep({ agent: { session: emptySession }, turn: 1, step: 1 }, async () => already), already);
 });
 
 test("server, manifest, and client use the same plugin identity", () => {
@@ -228,15 +297,19 @@ test("bundle patch writes the selected injection mode and stays cwd-free", () =>
 test("PowerShell 脚本必须带 UTF-8 BOM 且能通过语法解析", () => {
   // Windows PowerShell 5.1 按系统 ANSI 代码页解析无 BOM 的 .ps1：
   // 中文会被解坏、连引号都可能被吃掉，脚本直接语法错误无法运行。
+  // 安装器只随发布包提供，装进 $DSH_HOME\plugins 的副本里没有，缺失时跳过。
+  const present = (file) => existsSync(new URL(file, root));
   for (const file of [
     "install.ps1",
     "uninstall.ps1",
     "scripts/ensure-runtime.ps1",
     "scripts/isolate-instance.ps1",
   ]) {
+    if (!present(file)) continue;
     const head = [...load(file).subarray(0, 3)];
     assert.deepEqual(head, [0xef, 0xbb, 0xbf], `${file} 缺少 UTF-8 BOM`);
   }
+  if (!present("install.ps1")) return;
   // 0.7.0 曾因多写一个右花括号导致 install.ps1 整个解析失败。
   // 静态括号守卫：字符串与本脚本里的花括号不参与计数。
   const ps = load("install.ps1").toString("utf8");

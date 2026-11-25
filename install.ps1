@@ -23,7 +23,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $pluginName  = 'fujiang-armor'
 $pluginLabel = '富江破甲'
-$pluginVersion = '0.7.1'
+$pluginVersion = '0.8.0'
 $srcDir = $PSScriptRoot
 
 # ---------- 输出辅助 ----------
