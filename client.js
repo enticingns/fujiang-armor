@@ -10,7 +10,7 @@
 
         var react = require("react");
 
-        var inject = ["slots"];
+        var inject = ["slots", "remote"];
 
         var ANIM_CSS = "@keyframes fujiangArmorPulse{0%,100%{box-shadow:0 0 2px rgba(16,185,129,.5);opacity:1}50%{box-shadow:0 0 14px rgba(16,185,129,1);opacity:.6}}@keyframes fujiangArmorFlash{0%{transform:scale(1)}30%{transform:scale(1.1)}100%{transform:scale(1)}}";
 
@@ -115,21 +115,30 @@
           var showPopup = popupPair[0];
           var setShowPopup = popupPair[1];
           var aliveRef = react.useRef(true);
+          var executeRef = react.useRef(execute);
+          executeRef.current = execute;
 
-          var run = react.useCallback(function (line) {
-            if (typeof execute !== "function") return Promise.resolve(null);
-            return execute(line).then(function (result) {
-              var next = parseState(result);
-              if (next && aliveRef.current) setRuntime(next);
-              return next;
-            }, function () { return null; });
-          }, [execute]);
+          // 不把 execute 放进依赖：slot 每次注入可能给新函数引用，
+          // 若 effect 跟着 run 重建会每帧重新请求 /fujiang status。
+          function run(line) {
+            var fn = executeRef.current;
+            if (typeof fn !== "function") return Promise.resolve(null);
+            try {
+              return Promise.resolve(fn(line)).then(function (result) {
+                var next = parseState(result);
+                if (next && aliveRef.current) setRuntime(next);
+                return next;
+              }, function () { return null; });
+            } catch (err) {
+              return Promise.resolve(null);
+            }
+          }
 
           react.useEffect(function () {
             aliveRef.current = true;
             void run("/fujiang status");
             return function () { aliveRef.current = false; };
-          }, [run]);
+          }, []);
 
           react.useEffect(function () {
             var styleEl = null;
@@ -267,7 +276,13 @@
         }
 
         function apply(ctx) {
-          var remote = ctx && ctx.remote;
+          // remote 是可用的客户端服务；declared in inject 后才能通过 guard。
+          // 仍用 ctx.get 兜底：某些宿主把 remote 挂在 ctx 属性上，取不到时禁用开关按钮，
+          // 但徽章本身无条件注册——绝不让「开关不可用」把整个状态栏拖没。
+          var remote = ctx.remote;
+          if (remote === undefined && typeof ctx.get === "function") {
+            try { remote = ctx.get("remote"); } catch (err) { remote = undefined; }
+          }
           var commands = remote && remote.commands;
           var canExecute = !!(commands && typeof commands.execute === "function");
 

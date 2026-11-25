@@ -1,5 +1,11 @@
 # 更新说明
 
+## 0.9.1 — 修复 0.9.0 状态栏消失
+
+- **根因**：0.9.0 的 `client.js` 在 `apply()` 里直接读 `ctx.remote.commands`，但插件的 client `inject` 只声明了 `slots`，没声明 `remote`。客户端 sandbox 的 guard 对未声明服务的访问会让 `apply()` 抛错，slot 注册失败，绿色状态栏整条消失。
+- **修复**：client 的 `inject` 增加 `"remote"`；`remote` 用 `ctx.remote` + `ctx.get("remote")` 双路获取；`run()` 全程 try/catch；`useEffect` 不再依赖 `execute` 引用，避免每帧重发 `/fujiang status`。**徽章无条件注册**，开关不可用时只是没有按钮，不再拖垮状态栏。
+- 已安装副本与源码仓库同步，重载后 `fujiang_profile` 正常返回 0.9.1。
+
 ## 0.9.0 — 运行时开关：总开关 + 模式切换
 
 ### 新增
