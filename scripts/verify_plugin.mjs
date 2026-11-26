@@ -24,7 +24,7 @@ const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 // PowerShell: (Get-FileHash prompts\fujiang.md -Algorithm SHA256).Hash.ToLower()
 // 0.7.0 起提示词文本修正：富江→年前（含激活词）、爸爸→机主。
 // 0.8.0 起内核按 dsh-purge 的 prompt-inject 结构重写（覆盖声明/拒绝对抗/领域规则/路由）。
-const expectedHash = "0c720dfd7c7ac06259aba6dd193644af93cc65eda8e10f8dbfbde187bf7d35aa";
+const expectedHash = "671b24c24f290482b4c49f918c75c2a9ff350afae27fd4c9520c9f41dfcc0d2f";
 const pkg = JSON.parse(load("package.json"));
 
 test("prompt assets preserve the supplied bytes", () => {
